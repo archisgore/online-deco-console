@@ -393,27 +393,54 @@
     return { phase: hasAscended ? "deco stop" : "bottom", hasAscended: hasAscended };
   }
 
+  // Allocated time to physically switch tanks/regs in the water.
+  var GAS_SWITCH_MIN = 2;
+
   function renderResult(result) {
     var diveTime = segments.reduce(function (a, s) { return a + (s.time || 0); }, 0);
-    var totalTime = result.reduce(function (a, s) { return a + (s.time || 0); }, 0);
-    var decoTime = Math.max(0, totalTime - diveTime);
+    var engineTime = result.reduce(function (a, s) { return a + (s.time || 0); }, 0);
 
     var phaseClass = {
-      "descent":   "bg-brine-50 text-brine-800",
-      "bottom":    "bg-slate-100 text-slate-700",
-      "ascent":    "bg-amber-50 text-amber-800",
-      "deco stop": "bg-rose-50 text-rose-800",
+      "descent":    "bg-brine-50 text-brine-800",
+      "bottom":     "bg-slate-100 text-slate-700",
+      "ascent":     "bg-amber-50 text-amber-800",
+      "deco stop":  "bg-rose-50 text-rose-800",
+      "gas switch": "bg-kelp-100 text-kelp-800",
     };
 
+    // Walk the engine result and splice in an explicit "gas switch" row each
+    // time the gas changes. The switch happens at the current depth (start of
+    // the next segment) and is allocated GAS_SWITCH_MIN minutes — operational
+    // overhead that the engine doesn't account for but that the diver needs
+    // to actually do.
     var hasAscended = false;
     var running = 0;
-    var rows = result.map(function (s) {
+    var lastGas = null;
+    var switchCount = 0;
+    var rows = [];
+    result.forEach(function (s) {
+      if (lastGas !== null && s.gasName !== lastGas) {
+        var depthDisp = round1(fromMeters(s.startDepth));
+        running += GAS_SWITCH_MIN;
+        switchCount++;
+        rows.push(
+          '<tr class="hover:bg-slate-50">' +
+            '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + phaseClass["gas switch"] + '">gas switch</span></td>' +
+            '<td class="py-1.5 px-2 tabular-nums">' + depthDisp + '</td>' +
+            '<td class="py-1.5 px-2 tabular-nums">' + depthDisp + '</td>' +
+            '<td class="py-1.5 px-2 font-medium">' + escapeHtml(lastGas) + ' <span class="text-slate-400">→</span> ' + escapeHtml(s.gasName) + '</td>' +
+            '<td class="py-1.5 px-2 tabular-nums">' + GAS_SWITCH_MIN + '</td>' +
+            '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + '</td>' +
+          '</tr>'
+        );
+      }
+
       var cls = classifyPhase(s, hasAscended);
       hasAscended = cls.hasAscended;
       running += s.time;
       var startDisp = round1(fromMeters(s.startDepth));
       var endDisp   = round1(fromMeters(s.endDepth));
-      return (
+      rows.push(
         '<tr class="hover:bg-slate-50">' +
           '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + (phaseClass[cls.phase] || "") + '">' + cls.phase + "</span></td>" +
           '<td class="py-1.5 px-2 tabular-nums">' + startDisp + "</td>" +
@@ -423,9 +450,13 @@
           '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + "</td>" +
         "</tr>"
       );
-    }).join("");
+      lastGas = s.gasName;
+    });
 
-    $("planBody").innerHTML = rows;
+    var totalTime = engineTime + switchCount * GAS_SWITCH_MIN;
+    var decoTime = Math.max(0, totalTime - diveTime);
+
+    $("planBody").innerHTML = rows.join("");
     $("totalTime").textContent = round1(totalTime);
     $("decoTime").textContent = round1(decoTime);
     $("resultsSection").classList.remove("hidden");

@@ -491,7 +491,6 @@
       var s = segments[k];
       var skind = inferKind(s);
       if (!(s.time > 0)) return showError("Segment " + (k + 1) + ": time must be > 0.");
-      if (s.startDepth < 0 || s.endDepth < 0) return showError("Segment " + (k + 1) + ": depths must be ≥ 0.");
       if (skind === "descent" && !(s.endDepth > s.startDepth)) {
         return showError("Segment " + (k + 1) + " is a descent but end depth (" + s.endDepth + ") is not deeper than start (" + s.startDepth + ").");
       }

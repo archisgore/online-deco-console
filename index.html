@@ -165,6 +165,7 @@
             </table>
           </div>
           <p class="text-xs text-slate-500 mt-2">Descent / ascent segments take a start → end depth. Flat segments take a single depth. Pick a different gas per segment to plan travel gases.</p>
+          <p class="text-xs text-brine-700 mt-1 italic">Negative depths represent altitude above sea level — deco will be computed against the lower atmospheric pressure at that altitude.</p>
         </div>
 
         <div class="flex flex-wrap gap-3 items-center">
@@ -191,8 +192,8 @@
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 class="text-xl font-semibold text-slate-900">Computed plan</h2>
           <div class="text-sm text-slate-500">
-            <span class="mr-4">Total: <b id="totalTime" class="text-slate-900 tabular-nums">—</b> min</span>
-            <span class="mr-4">Deco: <b id="decoTime" class="text-slate-900 tabular-nums">—</b> min</span>
+            <span class="mr-4">Total: <b id="totalTime" class="text-slate-900 tabular-nums">—</b></span>
+            <span class="mr-4">Deco: <b id="decoTime" class="text-slate-900 tabular-nums">—</b></span>
             <span>Gas: <b id="totalGas" class="text-slate-900 tabular-nums">—</b> <span id="gasUnitLabel">L</span></span>
           </div>
         </div>
@@ -202,11 +203,10 @@
           <table class="w-full text-sm">
             <thead class="text-xs uppercase text-slate-500 bg-slate-50"><tr>
               <th class="text-left py-2 px-2">Phase</th>
-              <th class="text-left py-2 px-2">From (<span data-depth-unit>m</span>)</th>
-              <th class="text-left py-2 px-2">To (<span data-depth-unit>m</span>)</th>
+              <th class="text-left py-2 px-2">Depth(s) (<span data-depth-unit>m</span>)</th>
               <th class="text-left py-2 px-2">Gas</th>
-              <th class="text-left py-2 px-2">Time (min)</th>
-              <th class="text-left py-2 px-2">Running (min)</th>
+              <th class="text-left py-2 px-2">Time (m:ss)</th>
+              <th class="text-left py-2 px-2">Running (m:ss)</th>
               <th class="text-left py-2 px-2">Gas use (<span id="gasColUnit">L</span>)</th>
             </tr></thead>
             <tbody id="planBody" class="divide-y divide-slate-100"></tbody>
@@ -225,8 +225,8 @@
   </footer>
 
   <!-- Bump the ?v= query when shipping changes so browsers don't serve a stale cached copy. -->
-  <script src="src/scuba-dive.browserified.js?v=20260609j"></script>
-  <script src="src/deco-planner.js?v=20260609j"></script>
+  <script src="src/scuba-dive.browserified.js?v=20260609k"></script>
+  <script src="src/deco-planner.js?v=20260609k"></script>
 
 </body>
 </html>

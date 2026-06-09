@@ -186,13 +186,13 @@
     var depthCell;
     if (kind === "flat") {
       depthCell =
-        '<input type="number" step="0.5" min="0" data-field="depth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/>';
+        '<input type="number" step="0.5" data-field="depth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/>';
     } else {
       depthCell =
         '<span class="inline-flex items-center gap-1.5">' +
-          '<input type="number" step="0.5" min="0" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-20"/>' +
+          '<input type="number" step="0.5" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-20"/>' +
           '<span class="text-slate-400">→</span>' +
-          '<input type="number" step="0.5" min="0" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-20"/>' +
+          '<input type="number" step="0.5" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-20"/>' +
         '</span>';
     }
 
@@ -240,6 +240,25 @@
     };
   }
 
+  // After a segment's depth changes, propagate the new end-depth forward as
+  // the start of the next segment so the profile stays physically connected.
+  // We update the DOM input directly (rather than re-rendering) so the user's
+  // cursor stays in the field they're typing in.
+  function cascadeFromSegment(idx) {
+    if (idx + 1 >= segments.length) return;
+    var prev = segments[idx];
+    var prevEnd = (inferKind(prev) === "flat") ? prev.startDepth : prev.endDepth;
+    var next = segments[idx + 1];
+    var nextKind = inferKind(next);
+    next.startDepth = prevEnd;
+    if (nextKind === "flat") next.endDepth = prevEnd;
+    var nextRow = document.querySelector('tr[data-idx="' + (idx + 1) + '"][data-segkind]');
+    if (!nextRow) return;
+    var sel = nextKind === "flat" ? '[data-field="depth"]' : '[data-field="startDepth"]';
+    var input = nextRow.querySelector(sel);
+    if (input && document.activeElement !== input) input.value = prevEnd;
+  }
+
   function readSegment(row) {
     var kind = row.getAttribute("data-segkind") || "flat";
     var depthField = row.querySelector('[data-field="depth"]');
@@ -280,6 +299,11 @@
       if (changedField === "name") renderSegments();
     } else {
       segments[idx] = readSegment(row);
+      // Keep adjacent segments connected: any depth change on this row sets
+      // the start of the next row.
+      if (changedField === "depth" || changedField === "endDepth" || changedField === "startDepth") {
+        cascadeFromSegment(idx);
+      }
     }
   });
 
@@ -478,11 +502,19 @@
 
     var maxEndMeters = toMeters(maxEndCurrentUnits);
 
+    // Altitude — if any segment has a negative depth, treat the most-negative
+    // value as the surface altitude (m above sea level) and run deco against
+    // that lower atmospheric pressure rather than 1 ATA.
+    var altM = profileAltitudeMeters();
+    var atmBar = atmPressureBarAtAltitudeM(altM);
+    try { dive.constants.altitudePressure.current(atmBar); }
+    catch (e) { /* engine versions w/o setter — fall through */ }
+
     var plan;
     try {
       if (algorithm === "buhlmann") {
         var buhlmann = dive.deco.buhlmann();
-        plan = new buhlmann.plan(buhlmann.ZH16BTissues);
+        plan = new buhlmann.plan(buhlmann.ZH16BTissues, atmBar);
       } else {
         var vpm = dive.deco.vpm();
         plan = new vpm.plan();
@@ -494,9 +526,15 @@
     try {
       bottomGases.forEach(function (g) { plan.addBottomGas(g.name, g.fO2, g.fHe); });
       decoGases.forEach(function (g) { plan.addDecoGas(g.name, g.fO2, g.fHe); });
-      // Convert each segment's depths to meters for the engine.
+      // Convert each segment's depths to engine meters (offset by altitude so
+      // the water surface is at engine-depth 0).
       segments.forEach(function (s) {
-        plan.addDepthChange(toMeters(s.startDepth), toMeters(s.endDepth), s.gasName, s.time);
+        plan.addDepthChange(
+          toEngineMeters(s.startDepth, altM),
+          toEngineMeters(s.endDepth, altM),
+          s.gasName,
+          s.time
+        );
       });
     } catch (e) {
       return showError("Profile error: " + e);
@@ -525,7 +563,7 @@
       }
     }
 
-    renderResult(result);
+    renderResult(result, altM, atmBar);
     captureStateToUrl();
   }
 
@@ -541,18 +579,69 @@
   var GAS_SWITCH_MIN = 2;
 
   // Pressure in ATA at a given depth in meters (seawater, 10 m per atm).
+  // Depth can be negative (altitude above sea level); we clamp at 0 for
+  // hydrostatic purposes because negative water column doesn't exist.
   function pressureAta(depthMeters) {
     return 1 + Math.max(0, depthMeters) / 10;
   }
 
+  // International Standard Atmosphere — atmospheric pressure in bar at a
+  // given altitude (meters above sea level). Sea level = 1.01325 bar.
+  function atmPressureBarAtAltitudeM(altMeters) {
+    if (!(altMeters > 0)) return 1.01325;
+    return 1.01325 * Math.pow(1 - 0.0065 * altMeters / 288.15, 5.255);
+  }
+
+  // Determine the altitude implied by the profile. Convention: a depth value
+  // < 0 means "above sea level" (altitude diving). The MINIMUM depth across
+  // all segments is the highest point — the surface where the diver breathes
+  // atmospheric air. Returns altitude in meters, in METERS (engine units).
+  function profileAltitudeMeters() {
+    var minDepthDisplay = 0;
+    segments.forEach(function (s) {
+      if (s.startDepth < minDepthDisplay) minDepthDisplay = s.startDepth;
+      if (s.endDepth   < minDepthDisplay) minDepthDisplay = s.endDepth;
+    });
+    var minDepthMeters = toMeters(minDepthDisplay);
+    return minDepthMeters < 0 ? -minDepthMeters : 0;
+  }
+
+  // Convert a user-entered display depth (which may be negative for altitude)
+  // into meters below the water surface for the engine. With altitude diving,
+  // the water surface is at the most-negative depth entered.
+  function toEngineMeters(displayDepth, altMeters) {
+    var inMeters = toMeters(displayDepth);
+    return Math.max(0, inMeters + altMeters);
+  }
+
+  // Inverse — engine depth (meters below surface) → user-coordinate display.
+  function engineToDisplay(engineMeters, altMeters) {
+    return displayDepth(engineMeters - altMeters);
+  }
+
+  // Format a decimal-minute value as "M:SS".
+  function formatMin(min) {
+    if (!isFinite(min)) return "—";
+    var totalSec = Math.round(min * 60);
+    var m = Math.floor(totalSec / 60);
+    var s = totalSec - m * 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
   // Per-segment gas consumption.
   //   sac: surface consumption rate IN THE CURRENT DISPLAY UNIT (L/min or cu ft/min)
-  //   startMeters/endMeters/timeMin: depths in METERS, time in minutes
+  //   startEngineMeters/endEngineMeters: water depths in METERS (≥ 0)
+  //   timeMin: minutes
+  //   surfaceAtmBar: atmospheric pressure at the water surface (≈ 1.01325 at
+  //                  sea level; lower at altitude)
   // Returns volume in the same unit as sac (L or cu ft).
-  function consumeSegment(startMeters, endMeters, timeMin, sac) {
+  function consumeSegment(startEngineMeters, endEngineMeters, timeMin, sac, surfaceAtmBar) {
     if (!(sac > 0) || !(timeMin > 0)) return 0;
-    var avgMeters = (startMeters + endMeters) / 2;
-    return sac * pressureAta(avgMeters) * timeMin;
+    var avg = Math.max(0, (startEngineMeters + endEngineMeters) / 2);
+    var surfaceAtm = (surfaceAtmBar || 1.01325) / 1.01325;
+    // 10 m of seawater ≈ 1 atm.
+    var ambientAtm = surfaceAtm + avg / 10;
+    return sac * ambientAtm * timeMin;
   }
 
   // ---------- Share URL ----------
@@ -657,7 +746,9 @@
     document.body.removeChild(ta);
   }
 
-  function renderResult(result) {
+  function renderResult(result, altMeters, surfaceAtmBar) {
+    altMeters = altMeters || 0;
+    surfaceAtmBar = surfaceAtmBar || 1.01325;
     var diveTime = segments.reduce(function (a, s) { return a + (s.time || 0); }, 0);
     var engineTime = result.reduce(function (a, s) { return a + (s.time || 0); }, 0);
     var sac = Math.max(0, parseNum($("sac").value, 0));
@@ -670,16 +761,29 @@
       "gas switch": "bg-kelp-100 text-kelp-800",
     };
 
-    var gasTotals = {};         // gasName -> volume in display units
+    var gasTotals = {};
     function bumpGas(name, vol) {
       if (!(vol > 0)) return;
       gasTotals[name] = (gasTotals[name] || 0) + vol;
     }
     var vUnit = gasVolumeUnitLabel();
 
-    // Walk the engine result and splice in an explicit "gas switch" row each
-    // time the gas changes. The switch is GAS_SWITCH_MIN minutes; consumption
-    // is split 50/50 between the old and new gas at the switch depth.
+    // Map engine depth (m below surface) → user-coordinate display.
+    function depthCellFor(start, end, isFlat) {
+      var startUser = engineToDisplay(start, altMeters);
+      if (isFlat) {
+        return '<span class="tabular-nums">' + startUser + '</span>';
+      }
+      var endUser = engineToDisplay(end, altMeters);
+      return (
+        '<span class="inline-flex items-center gap-1.5">' +
+          '<span class="tabular-nums">' + startUser + '</span>' +
+          '<span class="text-slate-400">→</span>' +
+          '<span class="tabular-nums">' + endUser + '</span>' +
+        '</span>'
+      );
+    }
+
     var hasAscended = false;
     var running = 0;
     var lastGas = null;
@@ -687,10 +791,9 @@
     var rows = [];
     result.forEach(function (s) {
       if (lastGas !== null && s.gasName !== lastGas) {
-        var depthDisp = displayDepth(s.startDepth);
         var halfTime = GAS_SWITCH_MIN / 2;
-        var switchHalfA = consumeSegment(s.startDepth, s.startDepth, halfTime, sac);
-        var switchHalfB = consumeSegment(s.startDepth, s.startDepth, halfTime, sac);
+        var switchHalfA = consumeSegment(s.startDepth, s.startDepth, halfTime, sac, surfaceAtmBar);
+        var switchHalfB = consumeSegment(s.startDepth, s.startDepth, halfTime, sac, surfaceAtmBar);
         bumpGas(lastGas, switchHalfA);
         bumpGas(s.gasName, switchHalfB);
         var switchVol = switchHalfA + switchHalfB;
@@ -699,11 +802,10 @@
         rows.push(
           '<tr class="hover:bg-slate-50">' +
             '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + phaseClass["gas switch"] + '">gas switch</span></td>' +
-            '<td class="py-1.5 px-2 tabular-nums">' + depthDisp + '</td>' +
-            '<td class="py-1.5 px-2 tabular-nums">' + depthDisp + '</td>' +
+            '<td class="py-1.5 px-2">' + depthCellFor(s.startDepth, s.startDepth, true) + '</td>' +
             '<td class="py-1.5 px-2 font-medium">' + escapeHtml(lastGas) + ' <span class="text-slate-400">→</span> ' + escapeHtml(s.gasName) + '</td>' +
-            '<td class="py-1.5 px-2 tabular-nums">' + GAS_SWITCH_MIN + '</td>' +
-            '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + '</td>' +
+            '<td class="py-1.5 px-2 tabular-nums">' + formatMin(GAS_SWITCH_MIN) + '</td>' +
+            '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + formatMin(running) + '</td>' +
             '<td class="py-1.5 px-2 tabular-nums">' + round1(switchVol) + '</td>' +
           '</tr>'
         );
@@ -712,18 +814,16 @@
       var cls = classifyPhase(s, hasAscended);
       hasAscended = cls.hasAscended;
       running += s.time;
-      var startDisp = displayDepth(s.startDepth);
-      var endDisp   = displayDepth(s.endDepth);
-      var vol = consumeSegment(s.startDepth, s.endDepth, s.time, sac);
+      var isFlatRow = s.startDepth === s.endDepth;
+      var vol = consumeSegment(s.startDepth, s.endDepth, s.time, sac, surfaceAtmBar);
       bumpGas(s.gasName, vol);
       rows.push(
         '<tr class="hover:bg-slate-50">' +
           '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + (phaseClass[cls.phase] || "") + '">' + cls.phase + "</span></td>" +
-          '<td class="py-1.5 px-2 tabular-nums">' + startDisp + "</td>" +
-          '<td class="py-1.5 px-2 tabular-nums">' + endDisp + "</td>" +
+          '<td class="py-1.5 px-2">' + depthCellFor(s.startDepth, s.endDepth, isFlatRow) + '</td>' +
           '<td class="py-1.5 px-2">' + escapeHtml(s.gasName) + "</td>" +
-          '<td class="py-1.5 px-2 tabular-nums">' + round1(s.time) + "</td>" +
-          '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + "</td>" +
+          '<td class="py-1.5 px-2 tabular-nums">' + formatMin(s.time) + "</td>" +
+          '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + formatMin(running) + "</td>" +
           '<td class="py-1.5 px-2 tabular-nums">' + round1(vol) + "</td>" +
         "</tr>"
       );
@@ -747,8 +847,8 @@
     }).join(" ");
 
     $("planBody").innerHTML = rows.join("");
-    $("totalTime").textContent = round1(totalTime);
-    $("decoTime").textContent = round1(decoTime);
+    $("totalTime").textContent = formatMin(totalTime);
+    $("decoTime").textContent = formatMin(decoTime);
     $("totalGas").textContent = round1(grandVol);
     $("gasUnitLabel").textContent = vUnit;
     $("gasBreakdown").innerHTML = breakdownHtml;

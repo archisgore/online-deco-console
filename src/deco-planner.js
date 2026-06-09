@@ -50,10 +50,21 @@
   ];
   // Segments are stored in the user's CURRENT display units. When the user
   // toggles units we convert in-place so what they see stays consistent.
+  // `kind` is one of "descent" | "flat" | "ascent". For flat segments
+  // startDepth === endDepth (the UI exposes a single depth field).
   var segments = [
-    { startDepth: 0,  endDepth: 50, gasName: "21/35", time: 5  },
-    { startDepth: 50, endDepth: 50, gasName: "21/35", time: 25 },
+    { kind: "descent", startDepth: 0,  endDepth: 50, gasName: "21/35", time: 5  },
+    { kind: "flat",    startDepth: 50, endDepth: 50, gasName: "21/35", time: 25 },
   ];
+
+  // Infer kind from depth direction. Used to migrate legacy segments
+  // (e.g. from a shared URL written before kind existed).
+  function inferKind(s) {
+    if (typeof s.kind === "string") return s.kind;
+    if (s.endDepth > s.startDepth) return "descent";
+    if (s.endDepth < s.startDepth) return "ascent";
+    return "flat";
+  }
 
   // ---------- Helpers ----------
 
@@ -153,11 +164,37 @@
     );
   }
 
+  // Kind → pill colour + row background tint. Matches the result-table colours.
+  var segmentRowStyle = {
+    descent: { row: "bg-brine-50/40 hover:bg-brine-50",   pill: "bg-brine-100 text-brine-800",   label: "descent" },
+    flat:    { row: "bg-slate-50/60 hover:bg-slate-100/60", pill: "bg-slate-200 text-slate-700", label: "flat / bottom" },
+    ascent:  { row: "bg-amber-50/40 hover:bg-amber-50",   pill: "bg-amber-100 text-amber-800",   label: "ascent" },
+  };
+
   function renderSegmentRow(s, idx) {
+    var kind = inferKind(s);
+    var style = segmentRowStyle[kind] || segmentRowStyle.flat;
+
+    // Depth cell content depends on kind: flat shows ONE field, travel shows two.
+    var depthCell;
+    if (kind === "flat") {
+      depthCell =
+        '<input type="number" step="0.5" min="0" data-field="depth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/>';
+    } else {
+      depthCell =
+        '<span class="inline-flex items-center gap-1.5">' +
+          '<input type="number" step="0.5" min="0" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-20"/>' +
+          '<span class="text-slate-400">→</span>' +
+          '<input type="number" step="0.5" min="0" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-20"/>' +
+        '</span>';
+    }
+
     return (
-      '<tr data-idx="' + idx + '" class="border-b border-slate-100">' +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/></td>' +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-24"/></td>' +
+      '<tr data-idx="' + idx + '" data-segkind="' + kind + '" class="border-b border-slate-100 ' + style.row + '">' +
+        '<td class="py-1.5 pr-2">' +
+          '<span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + style.pill + '">' + style.label + '</span>' +
+        '</td>' +
+        '<td class="py-1.5 pr-2">' + depthCell + '</td>' +
         '<td class="py-1.5 pr-2"><select data-field="gasName" class="' + inputCls + ' w-36">' + gasOptionsHtml(s.gasName) + "</select></td>" +
         '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="time" value="' + s.time + '" class="' + inputCls + ' w-24"/></td>' +
         '<td class="py-1.5 pr-0 text-right"><button class="' + btnDanger + '" data-action="remove">Remove</button></td>' +
@@ -197,9 +234,21 @@
   }
 
   function readSegment(row) {
+    var kind = row.getAttribute("data-segkind") || "flat";
+    var depthField = row.querySelector('[data-field="depth"]');
+    var startField = row.querySelector('[data-field="startDepth"]');
+    var endField   = row.querySelector('[data-field="endDepth"]');
+    var startDepth, endDepth;
+    if (kind === "flat") {
+      startDepth = endDepth = parseNum(depthField ? depthField.value : 0, 0);
+    } else {
+      startDepth = parseNum(startField ? startField.value : 0, 0);
+      endDepth   = parseNum(endField   ? endField.value   : 0, 0);
+    }
     return {
-      startDepth: parseNum(row.querySelector('[data-field="startDepth"]').value, 0),
-      endDepth:   parseNum(row.querySelector('[data-field="endDepth"]').value, 0),
+      kind: kind,
+      startDepth: startDepth,
+      endDepth:   endDepth,
       gasName:    row.querySelector('[data-field="gasName"]').value,
       time:       parseNum(row.querySelector('[data-field="time"]').value, 0),
     };
@@ -268,13 +317,30 @@
   $("addStandardBottomGas").addEventListener("change", addStandardGas("bottom"));
   $("addStandardDecoGas").addEventListener("change", addStandardGas("deco"));
 
-  $("addDiveSegment").addEventListener("click", function () {
+  function addSegmentOfKind(kind) {
     var last = segments[segments.length - 1];
     var startDepth = last ? last.endDepth : 0;
     var firstGas = (bottomGases[0] && bottomGases[0].name) || "Air";
-    segments.push({ startDepth: startDepth, endDepth: startDepth, gasName: firstGas, time: 10 });
+    var seg;
+    if (kind === "descent") {
+      // Default to ~30 units deeper than where we are.
+      var nextDeeper = startDepth + (units === "imperial" ? 100 : 30);
+      seg = { kind: "descent", startDepth: startDepth, endDepth: nextDeeper, gasName: firstGas, time: 3 };
+    } else if (kind === "ascent") {
+      // Default to surface-bound. If already at 0, drop to a 6 m / 20 ft default end.
+      var nextShallower = Math.max(0, startDepth - (units === "imperial" ? 100 : 30));
+      if (nextShallower === startDepth) nextShallower = Math.max(0, startDepth - (units === "imperial" ? 20 : 6));
+      seg = { kind: "ascent", startDepth: startDepth || (units === "imperial" ? 100 : 30), endDepth: nextShallower, gasName: firstGas, time: 3 };
+    } else {
+      seg = { kind: "flat", startDepth: startDepth, endDepth: startDepth, gasName: firstGas, time: 20 };
+    }
+    segments.push(seg);
     render();
-  });
+  }
+
+  $("addDescentSegment").addEventListener("click", function () { addSegmentOfKind("descent"); });
+  $("addFlatSegment").addEventListener("click",    function () { addSegmentOfKind("flat"); });
+  $("addAscentSegment").addEventListener("click",  function () { addSegmentOfKind("ascent"); });
 
   $("resetDefaults").addEventListener("click", function () {
     units = $("unitsToggle").value === "imperial" ? "imperial" : "metric";
@@ -282,8 +348,8 @@
     decoGases   = [{ name: "50%", fO2: 0.5, fHe: 0 }, { name: "O2", fO2: 1.0, fHe: 0 }];
     var d50 = units === "imperial" ? 165 : 50; // ~50m ≈ 165ft
     segments = [
-      { startDepth: 0,   endDepth: d50, gasName: "21/35", time: 5  },
-      { startDepth: d50, endDepth: d50, gasName: "21/35", time: 25 },
+      { kind: "descent", startDepth: 0,   endDepth: d50, gasName: "21/35", time: 5  },
+      { kind: "flat",    startDepth: d50, endDepth: d50, gasName: "21/35", time: 25 },
     ];
     $("algorithm").value = "buhlmann";
     $("gfLow").value = 0.2; $("gfHigh").value = 0.8;
@@ -303,6 +369,7 @@
       var startMeters = prev === "imperial" ? s.startDepth / FT_PER_M : s.startDepth;
       var endMeters   = prev === "imperial" ? s.endDepth   / FT_PER_M : s.endDepth;
       return {
+        kind:       inferKind(s),
         startDepth: round1(fromMeters(startMeters)),
         endDepth:   round1(fromMeters(endMeters)),
         gasName:    s.gasName,
@@ -382,8 +449,15 @@
     // Segment validation
     for (var k = 0; k < segments.length; k++) {
       var s = segments[k];
+      var skind = inferKind(s);
       if (!(s.time > 0)) return showError("Segment " + (k + 1) + ": time must be > 0.");
       if (s.startDepth < 0 || s.endDepth < 0) return showError("Segment " + (k + 1) + ": depths must be ≥ 0.");
+      if (skind === "descent" && !(s.endDepth > s.startDepth)) {
+        return showError("Segment " + (k + 1) + " is a descent but end depth (" + s.endDepth + ") is not deeper than start (" + s.startDepth + ").");
+      }
+      if (skind === "ascent" && !(s.endDepth < s.startDepth)) {
+        return showError("Segment " + (k + 1) + " is an ascent but end depth (" + s.endDepth + ") is not shallower than start (" + s.startDepth + ").");
+      }
     }
 
     var maxEndMeters = toMeters(maxEndCurrentUnits);
@@ -499,12 +573,18 @@
         return { name: String(g.name || "unnamed"), fO2: +g.fO2 || 0, fHe: +g.fHe || 0 };
       });
       if (Array.isArray(s.s) && s.s.length) segments = s.s.map(function (seg) {
-        return {
+        var built = {
           startDepth: +seg.startDepth || 0,
           endDepth: +seg.endDepth || 0,
           gasName: String(seg.gasName || ""),
           time: +seg.time || 0,
         };
+        // Either honour an explicit kind from the URL (post-rewrite) or infer
+        // from depth direction (so old shared URLs still work).
+        built.kind = (seg.kind === "descent" || seg.kind === "flat" || seg.kind === "ascent")
+          ? seg.kind
+          : inferKind(built);
+        return built;
       });
       return true;
     } catch (e) {

@@ -141,15 +141,19 @@
         </div>
 
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
             <h2 class="text-lg font-semibold text-slate-900">Dive segments</h2>
-            <button id="addDiveSegment" class="inline-flex justify-center items-center rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium px-3 py-1 text-sm shadow-sm transition">+ Add</button>
+            <div class="flex gap-2 flex-wrap">
+              <button id="addDescentSegment" class="inline-flex justify-center items-center rounded-md bg-brine-50 border border-brine-200 hover:bg-brine-100 text-brine-800 font-medium px-3 py-1 text-sm shadow-sm transition">+ Descent</button>
+              <button id="addFlatSegment"    class="inline-flex justify-center items-center rounded-md bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 font-medium px-3 py-1 text-sm shadow-sm transition">+ Flat / bottom</button>
+              <button id="addAscentSegment"  class="inline-flex justify-center items-center rounded-md bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-800 font-medium px-3 py-1 text-sm shadow-sm transition">+ Ascent</button>
+            </div>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead class="text-xs uppercase text-slate-500"><tr>
-                <th class="text-left py-2 pr-2">From (<span data-depth-unit>m</span>)</th>
-                <th class="text-left py-2 pr-2">To (<span data-depth-unit>m</span>)</th>
+                <th class="text-left py-2 pr-2">Kind</th>
+                <th class="text-left py-2 pr-2">Depth(s) (<span data-depth-unit>m</span>)</th>
                 <th class="text-left py-2 pr-2">Gas</th>
                 <th class="text-left py-2 pr-2">Time (min)</th>
                 <th class="py-2 w-12"></th>
@@ -157,7 +161,7 @@
               <tbody id="diveSegmentsBody"></tbody>
             </table>
           </div>
-          <p class="text-xs text-slate-500 mt-2">Bottom segments use start == end (e.g., 50 → 50). Descent or ascent segments use start ≠ end.</p>
+          <p class="text-xs text-slate-500 mt-2">Descent / ascent segments take a start → end depth. Flat segments take a single depth. Pick a different gas per segment to plan travel gases.</p>
         </div>
 
         <div class="flex flex-wrap gap-3 items-center">
@@ -215,8 +219,8 @@
   </footer>
 
   <!-- Bump the ?v= query when shipping changes so browsers don't serve a stale cached copy. -->
-  <script src="src/scuba-dive.browserified.js?v=20260609g"></script>
-  <script src="src/deco-planner.js?v=20260609g"></script>
+  <script src="src/scuba-dive.browserified.js?v=20260609h"></script>
+  <script src="src/deco-planner.js?v=20260609h"></script>
 
 </body>
 </html>

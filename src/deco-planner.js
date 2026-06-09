@@ -80,6 +80,19 @@
     }).join("");
   }
 
+  // Keep each segment's gasName pointing to a still-registered gas. Called
+  // whenever the bottom/deco gas lists change (remove/rename), so a stranded
+  // reference to a deleted gas doesn't blow up the engine at Calculate-time.
+  function syncSegmentGases() {
+    var available = bottomGases.concat(decoGases).map(function (g) { return g.name; });
+    if (available.length === 0) return;
+    segments.forEach(function (s) {
+      if (available.indexOf(s.gasName) < 0) {
+        s.gasName = available[0];
+      }
+    });
+  }
+
   function standardGasOptionsHtml() {
     return '<option value="">Add standard gas…</option>' +
       STANDARD_GASES.map(function (g) {
@@ -157,9 +170,15 @@
     if (!row) return;
     var idx = parseInt(row.getAttribute("data-idx"), 10);
     var kind = row.getAttribute("data-kind");
-    if (kind === "bottom") bottomGases[idx] = readGas(row);
-    else if (kind === "deco") decoGases[idx] = readGas(row);
-    else segments[idx] = readSegment(row);
+    if (kind === "bottom") {
+      bottomGases[idx] = readGas(row);
+      syncSegmentGases();
+    } else if (kind === "deco") {
+      decoGases[idx] = readGas(row);
+      syncSegmentGases();
+    } else {
+      segments[idx] = readSegment(row);
+    }
   });
 
   document.addEventListener("click", function (ev) {
@@ -171,6 +190,7 @@
     if (kind === "bottom") bottomGases.splice(idx, 1);
     else if (kind === "deco") decoGases.splice(idx, 1);
     else segments.splice(idx, 1);
+    syncSegmentGases();
     render();
   });
 
@@ -276,6 +296,14 @@
       showError("Add at least one dive segment before calculating.");
       return;
     }
+
+    // Defense-in-depth: ensure every segment references a registered gas, in
+    // case a rename or removal slipped through. A change here triggers a
+    // re-render so the user can see the corrected gas choice before retrying.
+    var beforeNames = segments.map(function (s) { return s.gasName; }).join("|");
+    syncSegmentGases();
+    var afterNames = segments.map(function (s) { return s.gasName; }).join("|");
+    if (beforeNames !== afterNames) render();
 
     var algorithm = $("algorithm").value;
     var gfLow  = parseNum($("gfLow").value, NaN);

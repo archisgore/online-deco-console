@@ -165,21 +165,25 @@
     );
   }
 
-  function render() {
+  function renderGases() {
     $("bottomGassesBody").innerHTML = bottomGases.map(function (g, i) { return renderGasRow(g, "bottom", i); }).join("");
     $("decoGassesBody").innerHTML   = decoGases  .map(function (g, i) { return renderGasRow(g, "deco",   i); }).join("");
-    $("diveSegmentsBody").innerHTML = segments   .map(function (s, i) { return renderSegmentRow(s, i); }).join("");
-
-    // Standard-gas pickers (rebuild each time so unused names re-appear if a row is removed)
     $("addStandardBottomGas").innerHTML = standardGasOptionsHtml();
     $("addStandardDecoGas").innerHTML   = standardGasOptionsHtml();
     $("addStandardBottomGas").value = "";
     $("addStandardDecoGas").value = "";
+  }
 
-    // Update column headers with current unit label
+  function renderSegments() {
+    $("diveSegmentsBody").innerHTML = segments.map(function (s, i) { return renderSegmentRow(s, i); }).join("");
     var u = depthUnitLabel();
     var headers = document.querySelectorAll("[data-depth-unit]");
     for (var i = 0; i < headers.length; i++) headers[i].textContent = u;
+  }
+
+  function render() {
+    renderGases();
+    renderSegments();
   }
 
   // ---------- Wiring: edits + add/remove ----------
@@ -207,12 +211,17 @@
     if (!row) return;
     var idx = parseInt(row.getAttribute("data-idx"), 10);
     var kind = row.getAttribute("data-kind");
+    var changedField = t.getAttribute && t.getAttribute("data-field");
     if (kind === "bottom") {
       bottomGases[idx] = readGas(row);
       reportSyncChanges(syncSegmentGases());
+      // Refresh segment dropdowns so the new label is selectable. Don't touch
+      // the gas tables — that would yank focus out of the field you're typing in.
+      if (changedField === "name") renderSegments();
     } else if (kind === "deco") {
       decoGases[idx] = readGas(row);
       reportSyncChanges(syncSegmentGases());
+      if (changedField === "name") renderSegments();
     } else {
       segments[idx] = readSegment(row);
     }

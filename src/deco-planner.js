@@ -41,6 +41,13 @@
     return units === "imperial" ? meters * FT_PER_M : meters;
   }
 
+  // Surface Air Consumption (SAC) — the diver's at-surface breathing rate.
+  // Stored in the current display unit (L/min when metric, cu ft/min when imperial).
+  // 1 cu ft/min ≈ 28.3168 L/min.
+  var L_PER_CUFT = 28.3168;
+  function sacUnitLabel() { return units === "metric" ? "L/min" : "cu ft/min"; }
+  function gasVolumeUnitLabel() { return units === "metric" ? "L" : "cu ft"; }
+
   // ---------- State ----------
 
   var bottomGases = [{ name: "21/35", fO2: 0.21, fHe: 0.35 }];
@@ -355,6 +362,7 @@
     $("gfLow").value = 0.2; $("gfHigh").value = 0.8;
     $("ppO2").value = 1.6;
     $("end").value = units === "imperial" ? 100 : 30;
+    $("sac").value = units === "imperial" ? 1 : round1(L_PER_CUFT); // 1 cu ft/min ≈ 28.3 L/min
     $("resultsSection").classList.add("hidden");
     render();
   });
@@ -380,6 +388,14 @@
     var endNum = parseNum($("end").value, 30);
     var endMeters = prev === "imperial" ? endNum / FT_PER_M : endNum;
     $("end").value = round1(fromMeters(endMeters));
+    // SAC: imperial uses cu ft/min, metric uses L/min. Convert preserving the same
+    // physical rate (1 cu ft = 28.3168 L).
+    var sacNum = parseNum($("sac").value, 1);
+    var sacInLPerMin = prev === "imperial" ? sacNum * L_PER_CUFT : sacNum;
+    $("sac").value = units === "imperial" ? round1(sacInLPerMin / L_PER_CUFT) : round1(sacInLPerMin);
+    // Update unit labels (cu ft/min / L/min, "Gas (cu ft)" / "Gas (L)").
+    var sacLabels = document.querySelectorAll("[data-sac-unit]");
+    for (var s = 0; s < sacLabels.length; s++) sacLabels[s].textContent = sacUnitLabel();
     // Hide stale results (they were rendered in the previous units)
     $("resultsSection").classList.add("hidden");
     render();
@@ -524,6 +540,21 @@
   // Allocated time to physically switch tanks/regs in the water.
   var GAS_SWITCH_MIN = 2;
 
+  // Pressure in ATA at a given depth in meters (seawater, 10 m per atm).
+  function pressureAta(depthMeters) {
+    return 1 + Math.max(0, depthMeters) / 10;
+  }
+
+  // Per-segment gas consumption.
+  //   sac: surface consumption rate IN THE CURRENT DISPLAY UNIT (L/min or cu ft/min)
+  //   startMeters/endMeters/timeMin: depths in METERS, time in minutes
+  // Returns volume in the same unit as sac (L or cu ft).
+  function consumeSegment(startMeters, endMeters, timeMin, sac) {
+    if (!(sac > 0) || !(timeMin > 0)) return 0;
+    var avgMeters = (startMeters + endMeters) / 2;
+    return sac * pressureAta(avgMeters) * timeMin;
+  }
+
   // ---------- Share URL ----------
 
   // Serialize the full input state into the URL hash so a plan is shareable
@@ -537,6 +568,7 @@
       gfH: parseFloat($("gfHigh").value),
       pp: parseFloat($("ppO2").value),
       e: parseFloat($("end").value),
+      sac: parseFloat($("sac").value),
       bg: bottomGases,
       dg: decoGases,
       s: segments,
@@ -566,6 +598,7 @@
       if (typeof s.gfH === "number") $("gfHigh").value = s.gfH;
       if (typeof s.pp === "number") $("ppO2").value = s.pp;
       if (typeof s.e === "number") $("end").value = s.e;
+      if (typeof s.sac === "number") $("sac").value = s.sac;
       if (Array.isArray(s.bg) && s.bg.length) bottomGases = s.bg.map(function (g) {
         return { name: String(g.name || "unnamed"), fO2: +g.fO2 || 0, fHe: +g.fHe || 0 };
       });
@@ -627,6 +660,7 @@
   function renderResult(result) {
     var diveTime = segments.reduce(function (a, s) { return a + (s.time || 0); }, 0);
     var engineTime = result.reduce(function (a, s) { return a + (s.time || 0); }, 0);
+    var sac = Math.max(0, parseNum($("sac").value, 0));
 
     var phaseClass = {
       "descent":    "bg-brine-50 text-brine-800",
@@ -636,11 +670,16 @@
       "gas switch": "bg-kelp-100 text-kelp-800",
     };
 
+    var gasTotals = {};         // gasName -> volume in display units
+    function bumpGas(name, vol) {
+      if (!(vol > 0)) return;
+      gasTotals[name] = (gasTotals[name] || 0) + vol;
+    }
+    var vUnit = gasVolumeUnitLabel();
+
     // Walk the engine result and splice in an explicit "gas switch" row each
-    // time the gas changes. The switch happens at the current depth (start of
-    // the next segment) and is allocated GAS_SWITCH_MIN minutes — operational
-    // overhead that the engine doesn't account for but that the diver needs
-    // to actually do.
+    // time the gas changes. The switch is GAS_SWITCH_MIN minutes; consumption
+    // is split 50/50 between the old and new gas at the switch depth.
     var hasAscended = false;
     var running = 0;
     var lastGas = null;
@@ -649,6 +688,12 @@
     result.forEach(function (s) {
       if (lastGas !== null && s.gasName !== lastGas) {
         var depthDisp = displayDepth(s.startDepth);
+        var halfTime = GAS_SWITCH_MIN / 2;
+        var switchHalfA = consumeSegment(s.startDepth, s.startDepth, halfTime, sac);
+        var switchHalfB = consumeSegment(s.startDepth, s.startDepth, halfTime, sac);
+        bumpGas(lastGas, switchHalfA);
+        bumpGas(s.gasName, switchHalfB);
+        var switchVol = switchHalfA + switchHalfB;
         running += GAS_SWITCH_MIN;
         switchCount++;
         rows.push(
@@ -659,6 +704,7 @@
             '<td class="py-1.5 px-2 font-medium">' + escapeHtml(lastGas) + ' <span class="text-slate-400">→</span> ' + escapeHtml(s.gasName) + '</td>' +
             '<td class="py-1.5 px-2 tabular-nums">' + GAS_SWITCH_MIN + '</td>' +
             '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + '</td>' +
+            '<td class="py-1.5 px-2 tabular-nums">' + round1(switchVol) + '</td>' +
           '</tr>'
         );
       }
@@ -668,6 +714,8 @@
       running += s.time;
       var startDisp = displayDepth(s.startDepth);
       var endDisp   = displayDepth(s.endDepth);
+      var vol = consumeSegment(s.startDepth, s.endDepth, s.time, sac);
+      bumpGas(s.gasName, vol);
       rows.push(
         '<tr class="hover:bg-slate-50">' +
           '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + (phaseClass[cls.phase] || "") + '">' + cls.phase + "</span></td>" +
@@ -676,6 +724,7 @@
           '<td class="py-1.5 px-2">' + escapeHtml(s.gasName) + "</td>" +
           '<td class="py-1.5 px-2 tabular-nums">' + round1(s.time) + "</td>" +
           '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + "</td>" +
+          '<td class="py-1.5 px-2 tabular-nums">' + round1(vol) + "</td>" +
         "</tr>"
       );
       lastGas = s.gasName;
@@ -684,9 +733,26 @@
     var totalTime = engineTime + switchCount * GAS_SWITCH_MIN;
     var decoTime = Math.max(0, totalTime - diveTime);
 
+    // Total gas + per-gas breakdown
+    var grandVol = 0;
+    Object.keys(gasTotals).forEach(function (k) { grandVol += gasTotals[k]; });
+
+    var breakdownHtml = Object.keys(gasTotals).sort().map(function (name) {
+      return (
+        '<span class="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs">' +
+          '<span class="font-medium text-slate-700">' + escapeHtml(name) + '</span>' +
+          '<span class="text-slate-500 tabular-nums">' + round1(gasTotals[name]) + ' ' + vUnit + '</span>' +
+        '</span>'
+      );
+    }).join(" ");
+
     $("planBody").innerHTML = rows.join("");
     $("totalTime").textContent = round1(totalTime);
     $("decoTime").textContent = round1(decoTime);
+    $("totalGas").textContent = round1(grandVol);
+    $("gasUnitLabel").textContent = vUnit;
+    $("gasBreakdown").innerHTML = breakdownHtml;
+    $("gasColUnit").textContent = vUnit;
     $("resultsSection").classList.remove("hidden");
   }
 

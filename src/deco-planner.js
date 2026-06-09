@@ -66,6 +66,14 @@
 
   function round1(n) { return Math.round(n * 10) / 10; }
 
+  // Imperial depths are easier to read and dive when rounded to the
+  // standard 10-foot increment (matches typical deco stop intervals).
+  // Metric stays at 1-decimal resolution.
+  function displayDepth(meters) {
+    var v = fromMeters(meters);
+    return units === "imperial" ? Math.round(v / 10) * 10 : round1(v);
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -420,7 +428,7 @@
     var rows = [];
     result.forEach(function (s) {
       if (lastGas !== null && s.gasName !== lastGas) {
-        var depthDisp = round1(fromMeters(s.startDepth));
+        var depthDisp = displayDepth(s.startDepth);
         running += GAS_SWITCH_MIN;
         switchCount++;
         rows.push(
@@ -438,8 +446,8 @@
       var cls = classifyPhase(s, hasAscended);
       hasAscended = cls.hasAscended;
       running += s.time;
-      var startDisp = round1(fromMeters(s.startDepth));
-      var endDisp   = round1(fromMeters(s.endDepth));
+      var startDisp = displayDepth(s.startDepth);
+      var endDisp   = displayDepth(s.endDepth);
       rows.push(
         '<tr class="hover:bg-slate-50">' +
           '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + (phaseClass[cls.phase] || "") + '">' + cls.phase + "</span></td>" +

@@ -438,7 +438,10 @@
         /// <param name="time" type="Number">The time that lapsed during the depth change in minutes.</param>
         /// <param name="isFreshWater" type="Boolean">True to calculate changes in depth while in fresh water, false for salt water.</param>
         /// <returns>The depth change in bars per minute.</returns>
-        
+
+        if (!(time > 0) || !isFinite(time)) {
+            throw new Error("depthChangeInBarsPerMinute: time must be a finite positive number (got " + time + ")");
+        }
         var speed = (endDepth - beginDepth) / time;
         return $self.depthInMetersToBars(speed, isFreshWater) - $self.constants.altitudePressure.current();
     };
@@ -493,8 +496,11 @@
         /// <param name="pGas" type="Number">Partial pressure of inert gas at CURRENT depth (not target depth - but starting depth where change begins.)</param>
         /// <param name="pBegin" type="Number">Initial compartment inert gas pressure.</param>
         /// <returns>The end compartment inert gas pressure in bar.</returns>
-        var timeConstant = Math.log(2)/halfTime
-        return (pGas + (gasRate * (time - (1.0/timeConstant))) - ((pGas - pBegin - (gasRate / timeConstant)) * Math.exp(-timeConstant * time)));
+        if (!(halfTime > 0) || !isFinite(halfTime)) {
+            throw new Error("schreinerEquation: halfTime must be a finite positive number (got " + halfTime + ")");
+        }
+        var timeConstant = Math.log(2) / halfTime;
+        return (pGas + (gasRate * (time - (1.0 / timeConstant))) - ((pGas - pBegin - (gasRate / timeConstant)) * Math.exp(-timeConstant * time)));
     };
 
     $self.gas = function(fO2, fHe) {
@@ -504,6 +510,10 @@
         gas.fN2 = (1 - (gas.fO2 + gas.fHe));
 
         gas.modInMeters = function(ppO2, isFreshWater) {
+            if (!(this.fO2 > 0)) {
+                // A zero-O2 gas has no MOD — refuse to compute rather than return Infinity.
+                throw new Error("modInMeters: fO2 must be > 0 (got " + this.fO2 + ")");
+            }
             return $self.barToDepthInMeters(ppO2 / this.fO2, isFreshWater);
         };
 
@@ -522,6 +532,11 @@
 
             // Helium has a narc factor of 0 while N2 and O2 have a narc factor of 1
             var narcIndex = (this.fO2) + (this.fN2);
+
+            // Pure-helium gas (fO2=0, fHe=1, fN2=0) has zero narcosis: EAD is 0 m at any depth.
+            if (!(narcIndex > 0)) {
+                return 0;
+            }
 
             var bars = $self.depthInMetersToBars(depth, isFreshWater);
             var equivalentBars = bars/narcIndex;
@@ -715,9 +730,21 @@
         };
 
         buhlmannTissue.prototype.calculateCeiling = function (gf) {
-            gf = gf || 1.0
+            gf = (typeof gf === 'undefined' || gf === null) ? 1.0 : gf;
+            // pTotal is the sum of all inert-gas partial pressures in this compartment.
+            // It is positive at dive start (set from atmospheric N2) and only grows.
+            // If a corrupted state ever produces pTotal <= 0, fall back to a zero ceiling
+            // rather than letting NaN poison getCeiling's modulo loop.
+            if (!(this.pTotal > 0)) {
+                this.ceiling = 0;
+                return 0;
+            }
             var a = ((this.N2AValue() * this.pNitrogen) + (this.HeAValue() * this.pHelium)) / (this.pTotal);
             var b = ((this.N2BValue() * this.pNitrogen) + (this.HeBValue() * this.pHelium)) / (this.pTotal);
+            if (!(b > 0)) {
+                this.ceiling = 0;
+                return 0;
+            }
             var bars = (this.pTotal - (a * gf)) / ((gf / b) + 1.0 - gf);
             //var bars = (this.pTotal - a) * b;
             this.ceiling = dive.barToDepthInMeters(bars, this.isFreshWater);
@@ -769,16 +796,25 @@
         };
 
         plan.prototype.getCeiling = function (gf) {
-            gf = gf || 1.0
+            gf = (typeof gf === 'undefined' || gf === null) ? 1.0 : gf;
             var ceiling = 0;
             for (var i = 0; i < this.tissues.length; i++) {
                 var tissueCeiling = this.tissues[i].calculateCeiling(gf);
+                if (!isFinite(tissueCeiling)) {
+                    throw new Error("getCeiling: tissue " + i + " returned non-finite ceiling (" + tissueCeiling + ")");
+                }
                 if (!ceiling || tissueCeiling > ceiling) {
                     ceiling = tissueCeiling;
                 }
             }
+            // Round up to the next 3-metre stop. Cap iterations defensively so a
+            // bad input (e.g. NaN slipping through) can never hang the browser.
+            var roundIter = 0;
             while (ceiling % 3 != 0) {
                 ceiling++;
+                if (++roundIter > 1000) {
+                    throw new Error("getCeiling: stop-rounding loop runaway (ceiling=" + ceiling + ")");
+                }
             }
             return ceiling;
         };
@@ -793,11 +829,18 @@
         }
 
         plan.prototype.calculateDecompression = function (maintainTissues, gfLow, gfHigh, maxppO2, maxEND, fromDepth) {
-            maintainTissues = maintainTissues || false;
-            gfLow = gfLow || 1.0;
-            gfHigh = gfHigh || 1.0;
-            maxppO2 = maxppO2 || 1.6;
-            maxEND = maxEND || 30;
+            // Defaults — use explicit undefined checks so a deliberate 0 isn't silently
+            // promoted to 1.0 (which would be the most aggressive possible setting).
+            if (typeof maintainTissues === 'undefined' || maintainTissues === null) maintainTissues = false;
+            if (typeof gfLow === 'undefined' || gfLow === null) gfLow = 1.0;
+            if (typeof gfHigh === 'undefined' || gfHigh === null) gfHigh = 1.0;
+            if (typeof maxppO2 === 'undefined' || maxppO2 === null) maxppO2 = 1.6;
+            if (typeof maxEND === 'undefined' || maxEND === null) maxEND = 30;
+
+            if (!(gfLow > 0) || !(gfHigh > 0) || gfLow > gfHigh) {
+                throw new Error("calculateDecompression: invalid gradient factors (gfLow=" + gfLow + ", gfHigh=" + gfHigh + ")");
+            }
+
             var currentGasName;
             //console.log(this.segments);
             if (typeof fromDepth == 'undefined') {
@@ -814,12 +857,18 @@
                 }
             }
 
-            var gfDiff = gfHigh-gfLow; //find variance in gradient factor
-            var distanceToSurface = fromDepth;
-            var gfChangePerMeter = gfDiff/distanceToSurface
             if (!maintainTissues) {
                 var origTissues = JSON.stringify(this.tissues);
             }
+
+            // Already at or above the surface — nothing to decompress.
+            if (!(fromDepth > 0)) {
+                return dive.collapseSegments(this.segments);
+            }
+
+            var gfDiff = gfHigh-gfLow; //find variance in gradient factor
+            var distanceToSurface = fromDepth;
+            var gfChangePerMeter = gfDiff/distanceToSurface;
 
             var ceiling = this.getCeiling(gfLow);
 
@@ -1734,7 +1783,11 @@ $self.vpm = function () {
         initial_helium_pressure[i] = self.Helium_Pressure[i];
         initial_nitrogen_pressure[i] = self.Nitrogen_Pressure[i];
       }
+      var projected_iter = 0;
       while (true) {
+        if (++projected_iter > 10000) {
+          throw new Error("projected_ascent: did not converge after 10000 iterations (Deco_Stop_Depth=" + self.Deco_Stop_Depth + ")");
+        }
         ending_ambient_pressure = new_ambient_pressure;
         segment_time = (ending_ambient_pressure - starting_ambient_pressure) / rate;
         for (i = 0; i < ARRAY_LENGTH; i++) {
@@ -1819,7 +1872,11 @@ $self.vpm = function () {
           }
         }
       }
+      var decostop_iter = 0;
       while (true) {
+        if (++decostop_iter > 10000) {
+          throw new Error("decompression_stop: did not converge after 10000 iterations (next_stop=" + next_stop + ")");
+        }
         for (i = 0; i < ARRAY_LENGTH; i++) {
           initial_helium_pressure = self.Helium_Pressure[i];
           initial_nitrogen_pressure = self.Nitrogen_Pressure[i];
@@ -1872,13 +1929,21 @@ $self.vpm = function () {
         initial_allowable_grad_he_pa = self.Initial_Allowable_Gradient_He[i] / self.Units_Factor * self.ATM;
         B = initial_allowable_grad_he_pa + parameter_lambda_pascals * self.Surface_Tension_Gamma / (self.Skin_Compression_GammaC * phase_volume_time);
         C = self.Surface_Tension_Gamma * self.Surface_Tension_Gamma * parameter_lambda_pascals * adj_crush_pressure_he_pascals / (self.Skin_Compression_GammaC * self.Skin_Compression_GammaC * phase_volume_time);
-        new_allowable_grad_he_pascals = (B + Math.sqrt(Math.pow(B, 2) - 4 * C)) / 2;
+        var disc_he = Math.pow(B, 2) - 4 * C;
+        if (!(disc_he >= 0) || !isFinite(disc_he)) {
+            throw new Error("critical_volume: negative/NaN discriminant for He at i=" + i + " (B=" + B + ", C=" + C + ")");
+        }
+        new_allowable_grad_he_pascals = (B + Math.sqrt(disc_he)) / 2;
         self.Allowable_Gradient_He[i] = new_allowable_grad_he_pascals / self.ATM * self.Units_Factor;
         adj_crush_pressure_n2_pascals = self.Adjusted_Crushing_Pressure_N2[i] / self.Units_Factor * self.ATM;
         initial_allowable_grad_n2_pa = self.Initial_Allowable_Gradient_N2[i] / self.Units_Factor * self.ATM;
         B = initial_allowable_grad_n2_pa + parameter_lambda_pascals * self.Surface_Tension_Gamma / (self.Skin_Compression_GammaC * phase_volume_time);
         C = self.Surface_Tension_Gamma * self.Surface_Tension_Gamma * parameter_lambda_pascals * adj_crush_pressure_n2_pascals / (self.Skin_Compression_GammaC * self.Skin_Compression_GammaC * phase_volume_time);
-        new_allowable_grad_n2_pascals = (B + Math.sqrt(Math.pow(B, 2) - 4 * C)) / 2;
+        var disc_n2 = Math.pow(B, 2) - 4 * C;
+        if (!(disc_n2 >= 0) || !isFinite(disc_n2)) {
+            throw new Error("critical_volume: negative/NaN discriminant for N2 at i=" + i + " (B=" + B + ", C=" + C + ")");
+        }
+        new_allowable_grad_n2_pascals = (B + Math.sqrt(disc_n2)) / 2;
         self.Allowable_Gradient_N2[i] = new_allowable_grad_n2_pascals / self.ATM * self.Units_Factor;
       }
     };
@@ -1891,9 +1956,19 @@ $self.vpm = function () {
         if (self.Nitrogen_Pressure[i] > surface_inspired_n2_pressure) {
           self.Surface_Phase_Volume_Time[i] = (self.Helium_Pressure[i] / self.Helium_Time_Constant[i] + (self.Nitrogen_Pressure[i] - surface_inspired_n2_pressure) / self.Nitrogen_Time_Constant[i]) / (self.Helium_Pressure[i] + self.Nitrogen_Pressure[i] - surface_inspired_n2_pressure);
         } else if (self.Nitrogen_Pressure[i] <= surface_inspired_n2_pressure && self.Helium_Pressure[i] + self.Nitrogen_Pressure[i] >= surface_inspired_n2_pressure) {
-          decay_time_to_zero_gradient = 1 / (self.Nitrogen_Time_Constant[i] - self.Helium_Time_Constant[i]) * Math.log((surface_inspired_n2_pressure - self.Nitrogen_Pressure[i]) / self.Helium_Pressure[i]);
-          integral_gradient_x_time = self.Helium_Pressure[i] / self.Helium_Time_Constant[i] * (1 - Math.exp(-self.Helium_Time_Constant[i] * decay_time_to_zero_gradient)) + (self.Nitrogen_Pressure[i] - surface_inspired_n2_pressure) / self.Nitrogen_Time_Constant[i] * (1 - Math.exp(-self.Nitrogen_Time_Constant[i] * decay_time_to_zero_gradient));
-          self.Surface_Phase_Volume_Time[i] = integral_gradient_x_time / (self.Helium_Pressure[i] + self.Nitrogen_Pressure[i] - surface_inspired_n2_pressure);
+          // log argument must be > 0; when N2 pressure equals surface-inspired, numerator is 0 -> log(0) = -Inf.
+          // The N2 and He time constants are taken from the ZHL tissue table and are distinct for all 16
+          // compartments, so the denominator is non-zero. We still guard defensively.
+          var log_num = surface_inspired_n2_pressure - self.Nitrogen_Pressure[i];
+          var log_den = self.Helium_Pressure[i];
+          var tc_diff = self.Nitrogen_Time_Constant[i] - self.Helium_Time_Constant[i];
+          if (log_den > 0 && log_num > 0 && tc_diff !== 0) {
+            decay_time_to_zero_gradient = 1 / tc_diff * Math.log(log_num / log_den);
+            integral_gradient_x_time = self.Helium_Pressure[i] / self.Helium_Time_Constant[i] * (1 - Math.exp(-self.Helium_Time_Constant[i] * decay_time_to_zero_gradient)) + (self.Nitrogen_Pressure[i] - surface_inspired_n2_pressure) / self.Nitrogen_Time_Constant[i] * (1 - Math.exp(-self.Nitrogen_Time_Constant[i] * decay_time_to_zero_gradient));
+            self.Surface_Phase_Volume_Time[i] = integral_gradient_x_time / (self.Helium_Pressure[i] + self.Nitrogen_Pressure[i] - surface_inspired_n2_pressure);
+          } else {
+            self.Surface_Phase_Volume_Time[i] = 0;
+          }
         } else {
           self.Surface_Phase_Volume_Time[i] = 0;
         }
@@ -2019,8 +2094,9 @@ $self.vpm = function () {
         self.Fraction_Nitrogen[i] = gasmix_summary[i].fraction_N2;
         self.Fraction_Helium[i] = gasmix_summary[i].fraction_He;
         sum_of_fractions = fraction_oxygen[i] + self.Fraction_Nitrogen[i] + self.Fraction_Helium[i];
-        if (sum_of_fractions !== 1) {
-          throw new InputFileException('ERROR IN INPUT FILE (gas mixes don\'t add up to 1.0');
+        // Compare with tolerance — IEEE-754 means 0.21 + 0.44 + 0.35 isn't always exactly 1.0.
+        if (Math.abs(sum_of_fractions - 1) > 1e-9) {
+          throw new InputFileException('Gas fractions do not sum to 1.0 (sum=' + sum_of_fractions + ')');
         }
       }
       for (i = 0; i < num_gas_mixes; i++) {
@@ -2069,7 +2145,11 @@ $self.vpm = function () {
       var self = this;
       var i;
       '\n        Purpose:\n        DECO STOP LOOP BLOCK WITHIN CRITICAL VOLUME LOOP\n        This loop computes a decompression schedule to the surface during each\n        iteration of the critical volume loop.  No output is written from this\n        loop, rather it computes a schedule from which the in-water portion of the\n        total phase volume time (Deco_Phase_Volume_Time) can be extracted.  Also,\n        the gas loadings computed at the end of this loop are used in the subroutine\n        which computes the out-of-water portion of the total phase volume time\n        (Surface_Phase_Volume_Time) for that schedule.\n\n        Note that exit is made from the loop after last ascent is made to a deco\n        stop depth that is less than or equal to zero.  A final deco stop less\n        than zero can happen when the user makes an odd step size change during\n        ascent - such as specifying a 5 msw step size change at the 3 msw stop!\n\n        Side Effects: Sets\n        `self.Deco_Stop_Depth`,\n        `self.Last_Run_Time`\n        `self.Next_Stop`,\n        `self.Starting_Depth`,\n\n        Returns: None\n        ';
+      var inner_iter = 0;
       while (true) {
+        if (++inner_iter > 1000) {
+          throw new Error("deco_stop_loop_block_within_critical_volume_loop: exceeded 1000 iterations");
+        }
         self.gas_loadings_ascent_descent(self.Starting_Depth, self.Deco_Stop_Depth, self.Rate);
         if (self.Deco_Stop_Depth <= 0) {
           break;
@@ -2107,7 +2187,11 @@ $self.vpm = function () {
       self.Step_Size = self.Step_Size_Change[0];
       self.Deco_Stop_Depth = self.First_Stop_Depth;
       self.Last_Run_Time = 0;
+      var decision_iter = 0;
       while (true) {
+        if (++decision_iter > 1000) {
+          throw new Error("critical_volume_decision_tree: exceeded 1000 iterations");
+        }
         self.gas_loadings_ascent_descent(self.Starting_Depth, self.Deco_Stop_Depth, self.Rate);
         self.calc_max_actual_gradient(self.Deco_Stop_Depth);
         self.output_object.add_decompression_profile_ascent(self.Segment_Number, self.Segment_Time, self.Run_Time, self.Mix_Number, self.Deco_Stop_Depth, self.Rate);
@@ -2141,7 +2225,11 @@ $self.vpm = function () {
       var self = this;
       var rounding_operation2, i;
       '\n        Purpose:\n        If the Critical Volume\n        Algorithm is toggled "off" in the program settings, there will only be\n        one pass through this loop.  Otherwise, there will be two or more passes\n        through this loop until the deco schedule is "converged" - that is when a\n        comparison between the phase volume time of the present iteration and the\n        last iteration is less than or equal to one minute.  This implies that\n        the volume of released gas in the most recent iteration differs from the\n        "critical" volume limit by an acceptably small amount.  The critical\n        volume limit is set by the Critical Volume Parameter Lambda in the program\n        settings (default setting is 7500 fsw-min with adjustability range from\n        from 6500 to 8300 fsw-min according to Bruce Wienke).\n\n        Side Effects:\n\n        `self.Critical_Volume_Comparison`,\n        `self.Deco_Phase_Volume_Time`,\n        `self.Deco_Phase_Volume_Time`,\n        `self.Deco_Stop_Depth`,\n        `self.Ending_Depth`,\n        `self.First_Stop_Depth`,\n        `self.Helium_Pressure`,\n        `self.Helium_Pressure`,\n        `self.Last_Phase_Volume_Time`,\n        `self.Mix_Number`,\n        `self.Nitrogen_Pressure`\n        `self.Nitrogen_Pressure`,\n        `self.Phase_Volume_Time`,\n        `self.Rate`,\n        `self.Run_Time`,\n        `self.Run_Time`,\n        `self.Schedule_Converged`,\n        `self.Segment_Number`,\n        `self.Starting_Depth`,\n        `self.Starting_Depth`,\n        `self.Starting_Depth`,\n        `self.Step_Size`,\n\n        or\n\n        Raises a DecompressionStepException\n\n        Returns: None\n        ';
+      var crit_vol_iter = 0;
       while (true) {
+        if (++crit_vol_iter > 50) {
+          throw new Error("critical_volume_loop: failed to converge after 50 iterations");
+        }
         self.calc_ascent_ceiling();
         if (self.Ascent_Ceiling_Depth <= 0) {
           self.Deco_Stop_Depth = 0;
@@ -2513,10 +2601,10 @@ $self.vpm = function () {
   };
   plan.prototype.calculateDecompression = function (maintainTissues, gfLow, gfHigh, maxppO2, maxEND, fromDepth) {
     maintainTissues = maintainTissues || false;
-    gfLow = gfLow || 1;
-    gfHigh = gfHigh || 1;
-    maxppO2 = maxppO2 || 1.6;
-    maxEND = maxEND || 30;
+    if (typeof gfLow === 'undefined' || gfLow === null) gfLow = 1;
+    if (typeof gfHigh === 'undefined' || gfHigh === null) gfHigh = 1;
+    if (typeof maxppO2 === 'undefined' || maxppO2 === null) maxppO2 = 1.6;
+    if (typeof maxEND === 'undefined' || maxEND === null) maxEND = 30;
     var currentGasName;
     if (typeof fromDepth == 'undefined') {
       if (this.segments.length == 0) {
@@ -2708,11 +2796,9 @@ $self.vpm = function () {
       //console.log(JSON.stringify(input, null, 2));
     var vpmPlanInner = VPMDivePlan(input);
     //execute divestate
-    try {
-      vpmPlanInner.main();
-    } catch (e) {
-      return e;
-    }
+    // Do NOT swallow exceptions here — letting them propagate gives the UI
+    // a real error message instead of silently producing a malformed "plan".
+    vpmPlanInner.main();
     var outputjson = vpmPlanInner.output_object.get_json()[0];
 
     //wrangle output to conform to buhlmann-output - which is simply a series of

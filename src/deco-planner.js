@@ -12,15 +12,44 @@
   var dive = require("/scuba-dive.js");
   window.dive = dive; // expose for advanced users / browser console
 
+  // ---------- Standard gas mixes (chosen by the maintainer) ----------
+
+  var STANDARD_GASES = [
+    { name: "Air",     fO2: 0.21, fHe: 0.00 },
+    { name: "32%",     fO2: 0.32, fHe: 0.00 },
+    { name: "50%",     fO2: 0.50, fHe: 0.00 },
+    { name: "O2",      fO2: 1.00, fHe: 0.00 },
+    { name: "30/30",   fO2: 0.30, fHe: 0.30 },
+    { name: "21/35",   fO2: 0.21, fHe: 0.35 },
+    { name: "18/45",   fO2: 0.18, fHe: 0.45 },
+    { name: "15/55",   fO2: 0.15, fHe: 0.55 },
+    { name: "10/70",   fO2: 0.10, fHe: 0.70 },
+  ];
+
+  // ---------- Units ----------
+
+  // The deco engine works in meters internally. We translate at the I/O boundary
+  // so the user can think in feet if they prefer. 1 m = 3.28084 ft.
+  var FT_PER_M = 3.28084;
+  var units = "metric"; // "metric" | "imperial"
+
+  function depthUnitLabel() { return units === "metric" ? "m" : "ft"; }
+  function toMeters(depthInCurrentUnits) {
+    return units === "imperial" ? depthInCurrentUnits / FT_PER_M : depthInCurrentUnits;
+  }
+  function fromMeters(meters) {
+    return units === "imperial" ? meters * FT_PER_M : meters;
+  }
+
   // ---------- State ----------
 
-  var bottomGases = [
-    { name: "21/35",  fO2: 0.21, fHe: 0.35 },
+  var bottomGases = [{ name: "21/35", fO2: 0.21, fHe: 0.35 }];
+  var decoGases   = [
+    { name: "50%", fO2: 0.50, fHe: 0.00 },
+    { name: "O2",  fO2: 1.00, fHe: 0.00 },
   ];
-  var decoGases = [
-    { name: "50%",         fO2: 0.50, fHe: 0.00 },
-    { name: "Oxygen 100%", fO2: 1.00, fHe: 0.00 },
-  ];
+  // Segments are stored in the user's CURRENT display units. When the user
+  // toggles units we convert in-place so what they see stays consistent.
   var segments = [
     { startDepth: 0,  endDepth: 50, gasName: "21/35", time: 5  },
     { startDepth: 50, endDepth: 50, gasName: "21/35", time: 25 },
@@ -35,9 +64,7 @@
     return isFinite(n) ? n : fallback;
   }
 
-  function round1(n) {
-    return Math.round(n * 10) / 10;
-  }
+  function round1(n) { return Math.round(n * 10) / 10; }
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -53,15 +80,25 @@
     }).join("");
   }
 
+  function standardGasOptionsHtml() {
+    return '<option value="">Add standard gas…</option>' +
+      STANDARD_GASES.map(function (g) {
+        return '<option value="' + escapeHtml(g.name) + '">' + escapeHtml(g.name) + "</option>";
+      }).join("");
+  }
+
   // ---------- Render ----------
+
+  var inputCls = "rounded-md border border-slate-300 bg-white px-2 py-1 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none";
+  var btnDanger = "inline-flex items-center gap-1 rounded-md bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 text-xs px-2 py-1 transition";
 
   function renderGasRow(g, kind, idx) {
     return (
       '<tr data-idx="' + idx + '" data-kind="' + kind + '" class="border-b border-slate-100">' +
-        '<td class="py-1.5 pr-2"><input type="text" data-field="name" value="' + escapeHtml(g.name) + '" class="w-full"/></td>' +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.01" min="0" max="1" data-field="fO2" value="' + g.fO2 + '" class="w-24"/></td>' +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.01" min="0" max="1" data-field="fHe" value="' + g.fHe + '" class="w-24"/></td>' +
-        '<td class="py-1.5 pr-0 text-right"><button class="btn-danger" data-action="remove">Remove</button></td>' +
+        '<td class="py-1.5 pr-2"><input type="text" data-field="name" value="' + escapeHtml(g.name) + '" class="' + inputCls + ' w-full"/></td>' +
+        '<td class="py-1.5 pr-2"><input type="number" step="0.01" min="0" max="1" data-field="fO2" value="' + g.fO2 + '" class="' + inputCls + ' w-24"/></td>' +
+        '<td class="py-1.5 pr-2"><input type="number" step="0.01" min="0" max="1" data-field="fHe" value="' + g.fHe + '" class="' + inputCls + ' w-24"/></td>' +
+        '<td class="py-1.5 pr-0 text-right"><button class="' + btnDanger + '" data-action="remove">Remove</button></td>' +
       "</tr>"
     );
   }
@@ -69,11 +106,11 @@
   function renderSegmentRow(s, idx) {
     return (
       '<tr data-idx="' + idx + '" class="border-b border-slate-100">' +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="startDepth" value="' + s.startDepth + '" class="w-24"/></td>' +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="endDepth" value="' + s.endDepth + '" class="w-24"/></td>' +
-        '<td class="py-1.5 pr-2"><select data-field="gasName" class="w-36">' + gasOptionsHtml(s.gasName) + "</select></td>" +
-        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="time" value="' + s.time + '" class="w-24"/></td>' +
-        '<td class="py-1.5 pr-0 text-right"><button class="btn-danger" data-action="remove">Remove</button></td>' +
+        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/></td>' +
+        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-24"/></td>' +
+        '<td class="py-1.5 pr-2"><select data-field="gasName" class="' + inputCls + ' w-36">' + gasOptionsHtml(s.gasName) + "</select></td>" +
+        '<td class="py-1.5 pr-2"><input type="number" step="0.5" min="0" data-field="time" value="' + s.time + '" class="' + inputCls + ' w-24"/></td>' +
+        '<td class="py-1.5 pr-0 text-right"><button class="' + btnDanger + '" data-action="remove">Remove</button></td>' +
       "</tr>"
     );
   }
@@ -82,6 +119,17 @@
     $("bottomGassesBody").innerHTML = bottomGases.map(function (g, i) { return renderGasRow(g, "bottom", i); }).join("");
     $("decoGassesBody").innerHTML   = decoGases  .map(function (g, i) { return renderGasRow(g, "deco",   i); }).join("");
     $("diveSegmentsBody").innerHTML = segments   .map(function (s, i) { return renderSegmentRow(s, i); }).join("");
+
+    // Standard-gas pickers (rebuild each time so unused names re-appear if a row is removed)
+    $("addStandardBottomGas").innerHTML = standardGasOptionsHtml();
+    $("addStandardDecoGas").innerHTML   = standardGasOptionsHtml();
+    $("addStandardBottomGas").value = "";
+    $("addStandardDecoGas").value = "";
+
+    // Update column headers with current unit label
+    var u = depthUnitLabel();
+    var headers = document.querySelectorAll("[data-depth-unit]");
+    for (var i = 0; i < headers.length; i++) headers[i].textContent = u;
   }
 
   // ---------- Wiring: edits + add/remove ----------
@@ -126,34 +174,80 @@
     render();
   });
 
+  function addStandardGas(target) {
+    return function (ev) {
+      var name = ev.target.value;
+      if (!name) return;
+      var pick = null;
+      for (var i = 0; i < STANDARD_GASES.length; i++) {
+        if (STANDARD_GASES[i].name === name) { pick = STANDARD_GASES[i]; break; }
+      }
+      if (!pick) return;
+      var list = target === "bottom" ? bottomGases : decoGases;
+      // Don't duplicate by name
+      for (var j = 0; j < list.length; j++) if (list[j].name === pick.name) { ev.target.value = ""; return; }
+      list.push({ name: pick.name, fO2: pick.fO2, fHe: pick.fHe });
+      render();
+    };
+  }
+
   $("addBottomGas").addEventListener("click", function () {
     bottomGases.push({ name: "air", fO2: 0.21, fHe: 0 });
     render();
   });
-
   $("addDecoGas").addEventListener("click", function () {
     decoGases.push({ name: "50%", fO2: 0.5, fHe: 0 });
     render();
   });
+  $("addStandardBottomGas").addEventListener("change", addStandardGas("bottom"));
+  $("addStandardDecoGas").addEventListener("change", addStandardGas("deco"));
 
   $("addDiveSegment").addEventListener("click", function () {
     var last = segments[segments.length - 1];
     var startDepth = last ? last.endDepth : 0;
-    var firstGas = (bottomGases[0] && bottomGases[0].name) || "air";
+    var firstGas = (bottomGases[0] && bottomGases[0].name) || "Air";
     segments.push({ startDepth: startDepth, endDepth: startDepth, gasName: firstGas, time: 10 });
     render();
   });
 
   $("resetDefaults").addEventListener("click", function () {
+    units = $("unitsToggle").value === "imperial" ? "imperial" : "metric";
     bottomGases = [{ name: "21/35", fO2: 0.21, fHe: 0.35 }];
-    decoGases   = [{ name: "50%", fO2: 0.5, fHe: 0 }, { name: "Oxygen 100%", fO2: 1.0, fHe: 0 }];
-    segments    = [
-      { startDepth: 0,  endDepth: 50, gasName: "21/35", time: 5  },
-      { startDepth: 50, endDepth: 50, gasName: "21/35", time: 25 },
+    decoGases   = [{ name: "50%", fO2: 0.5, fHe: 0 }, { name: "O2", fO2: 1.0, fHe: 0 }];
+    var d50 = units === "imperial" ? 165 : 50; // ~50m ≈ 165ft
+    segments = [
+      { startDepth: 0,   endDepth: d50, gasName: "21/35", time: 5  },
+      { startDepth: d50, endDepth: d50, gasName: "21/35", time: 25 },
     ];
     $("algorithm").value = "buhlmann";
     $("gfLow").value = 0.2; $("gfHigh").value = 0.8;
-    $("ppO2").value = 1.6; $("end").value = 30;
+    $("ppO2").value = 1.6;
+    $("end").value = units === "imperial" ? 100 : 30;
+    $("resultsSection").classList.add("hidden");
+    render();
+  });
+
+  $("unitsToggle").addEventListener("change", function (ev) {
+    var newUnits = ev.target.value === "imperial" ? "imperial" : "metric";
+    if (newUnits === units) return;
+    var prev = units;
+    units = newUnits;
+    // Convert segment depths so the displayed numbers stay physically equivalent.
+    segments = segments.map(function (s) {
+      var startMeters = prev === "imperial" ? s.startDepth / FT_PER_M : s.startDepth;
+      var endMeters   = prev === "imperial" ? s.endDepth   / FT_PER_M : s.endDepth;
+      return {
+        startDepth: round1(fromMeters(startMeters)),
+        endDepth:   round1(fromMeters(endMeters)),
+        gasName:    s.gasName,
+        time:       s.time,
+      };
+    });
+    // Convert max END similarly
+    var endNum = parseNum($("end").value, 30);
+    var endMeters = prev === "imperial" ? endNum / FT_PER_M : endNum;
+    $("end").value = round1(fromMeters(endMeters));
+    // Hide stale results (they were rendered in the previous units)
     $("resultsSection").classList.add("hidden");
     render();
   });
@@ -175,12 +269,6 @@
     $("errorBanner").textContent = "";
   }
 
-  function classifyPhase(seg, lastDepth) {
-    if (seg.endDepth > lastDepth)  return "descent";
-    if (seg.endDepth < lastDepth)  return seg.startDepth === seg.endDepth ? "stop" : "ascent";
-    return seg.startDepth === seg.endDepth ? "bottom" : "ascent";
-  }
-
   function calculate() {
     clearError();
 
@@ -193,13 +281,31 @@
     var gfLow  = parseNum($("gfLow").value, NaN);
     var gfHigh = parseNum($("gfHigh").value, NaN);
     var ppO2   = parseNum($("ppO2").value, NaN);
-    var maxEnd = parseNum($("end").value, NaN);
+    var maxEndCurrentUnits = parseNum($("end").value, NaN);
 
     if (!isFinite(gfLow) || gfLow <= 0 || gfLow > 1) return showError("GF Low must be between 0 and 1.");
     if (!isFinite(gfHigh) || gfHigh <= 0 || gfHigh > 1) return showError("GF High must be between 0 and 1.");
     if (gfLow > gfHigh) return showError("GF Low must be less than or equal to GF High.");
     if (!isFinite(ppO2) || ppO2 <= 0 || ppO2 > 2) return showError("Deco ppO₂ must be between 0 and 2.");
-    if (!isFinite(maxEnd) || maxEnd < 0) return showError("Max END must be non-negative.");
+    if (!isFinite(maxEndCurrentUnits) || maxEndCurrentUnits < 0) return showError("Max END must be non-negative.");
+
+    // Gas validation
+    var allGases = bottomGases.concat(decoGases);
+    for (var i = 0; i < allGases.length; i++) {
+      var g = allGases[i];
+      if (!(g.fO2 > 0))                   return showError("Gas '" + g.name + "': fO2 must be > 0.");
+      if (g.fHe < 0)                      return showError("Gas '" + g.name + "': fHe must be ≥ 0.");
+      if (g.fO2 + g.fHe > 1.0 + 1e-9)     return showError("Gas '" + g.name + "': fO2 + fHe > 1.0 (would imply negative N2).");
+    }
+
+    // Segment validation
+    for (var k = 0; k < segments.length; k++) {
+      var s = segments[k];
+      if (!(s.time > 0)) return showError("Segment " + (k + 1) + ": time must be > 0.");
+      if (s.startDepth < 0 || s.endDepth < 0) return showError("Segment " + (k + 1) + ": depths must be ≥ 0.");
+    }
+
+    var maxEndMeters = toMeters(maxEndCurrentUnits);
 
     var plan;
     try {
@@ -217,58 +323,73 @@
     try {
       bottomGases.forEach(function (g) { plan.addBottomGas(g.name, g.fO2, g.fHe); });
       decoGases.forEach(function (g) { plan.addDecoGas(g.name, g.fO2, g.fHe); });
-      segments.forEach(function (s) { plan.addDepthChange(s.startDepth, s.endDepth, s.gasName, s.time); });
+      // Convert each segment's depths to meters for the engine.
+      segments.forEach(function (s) {
+        plan.addDepthChange(toMeters(s.startDepth), toMeters(s.endDepth), s.gasName, s.time);
+      });
     } catch (e) {
       return showError("Profile error: " + e);
     }
 
     var result;
     try {
-      result = plan.calculateDecompression(false, gfLow, gfHigh, ppO2, maxEnd);
+      result = plan.calculateDecompression(false, gfLow, gfHigh, ppO2, maxEndMeters);
     } catch (e) {
-      return showError("Decompression calculation failed: " + e);
+      return showError("Decompression calculation failed: " + (e && e.message ? e.message : e));
     }
 
     if (!result || !result.length) {
       return showError("Engine returned no plan. Check that gases and segments are consistent.");
     }
 
-    // Sanity-check the engine's output before rendering. We refuse to display
-    // numbers that look pathological (NaN / Infinity / negative time) — better
-    // a visible error than a silently wrong dive plan.
-    for (var i = 0; i < result.length; i++) {
-      var r = result[i];
+    // Refuse to display pathological numbers — better a visible error than a wrong plan.
+    for (var n = 0; n < result.length; n++) {
+      var r = result[n];
       if (!isFinite(r.startDepth) || !isFinite(r.endDepth) || !isFinite(r.time) || r.time < 0) {
         return showError(
-          "Plan rejected: segment " + i + " has invalid numbers " +
+          "Plan rejected: segment " + n + " has invalid numbers " +
           "(start=" + r.startDepth + ", end=" + r.endDepth + ", time=" + r.time + "). " +
           "Try a more conservative profile."
         );
       }
     }
 
-    // Render
-    var lastDepth = 0;
-    var running = 0;
+    renderResult(result);
+  }
+
+  function classifyPhase(seg, hasAscended) {
+    // Pure depth change first.
+    if (seg.endDepth > seg.startDepth) return { phase: "descent", hasAscended: hasAscended };
+    if (seg.endDepth < seg.startDepth) return { phase: "ascent",  hasAscended: true };
+    // start == end → it's a hold. Bottom only counts before the first ascent.
+    return { phase: hasAscended ? "deco stop" : "bottom", hasAscended: hasAscended };
+  }
+
+  function renderResult(result) {
     var diveTime = segments.reduce(function (a, s) { return a + (s.time || 0); }, 0);
     var totalTime = result.reduce(function (a, s) { return a + (s.time || 0); }, 0);
-    var decoTime = totalTime - diveTime;
+    var decoTime = Math.max(0, totalTime - diveTime);
 
+    var phaseClass = {
+      "descent":   "bg-brine-50 text-brine-800",
+      "bottom":    "bg-slate-100 text-slate-700",
+      "ascent":    "bg-amber-50 text-amber-800",
+      "deco stop": "bg-rose-50 text-rose-800",
+    };
+
+    var hasAscended = false;
+    var running = 0;
     var rows = result.map(function (s) {
-      var phase = classifyPhase(s, lastDepth);
-      lastDepth = s.endDepth;
+      var cls = classifyPhase(s, hasAscended);
+      hasAscended = cls.hasAscended;
       running += s.time;
-      var phaseClass = {
-        descent: "bg-brine-50 text-brine-800",
-        bottom:  "bg-slate-50 text-slate-700",
-        ascent:  "bg-amber-50 text-amber-800",
-        stop:    "bg-rose-50 text-rose-800",
-      }[phase] || "";
+      var startDisp = round1(fromMeters(s.startDepth));
+      var endDisp   = round1(fromMeters(s.endDepth));
       return (
         '<tr class="hover:bg-slate-50">' +
-          '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + phaseClass + '">' + phase + "</span></td>" +
-          '<td class="py-1.5 px-2 tabular-nums">' + round1(s.startDepth) + "</td>" +
-          '<td class="py-1.5 px-2 tabular-nums">' + round1(s.endDepth) + "</td>" +
+          '<td class="py-1.5 px-2"><span class="inline-flex rounded px-2 py-0.5 text-xs font-medium ' + (phaseClass[cls.phase] || "") + '">' + cls.phase + "</span></td>" +
+          '<td class="py-1.5 px-2 tabular-nums">' + startDisp + "</td>" +
+          '<td class="py-1.5 px-2 tabular-nums">' + endDisp + "</td>" +
           '<td class="py-1.5 px-2">' + escapeHtml(s.gasName) + "</td>" +
           '<td class="py-1.5 px-2 tabular-nums">' + round1(s.time) + "</td>" +
           '<td class="py-1.5 px-2 tabular-nums text-slate-500">' + round1(running) + "</td>" +
@@ -282,7 +403,13 @@
     $("resultsSection").classList.remove("hidden");
   }
 
-  $("calculateDeco").addEventListener("click", calculate);
+  $("calculateDeco").addEventListener("click", function () {
+    var btn = $("calculateDeco");
+    if (btn.disabled) return;       // already running
+    btn.disabled = true;
+    try { calculate(); }
+    finally { btn.disabled = false; }
+  });
 
   render();
 })();

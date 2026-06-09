@@ -32,15 +32,7 @@
         radial-gradient(900px 400px at 90% -20%, rgba(72,133,79,0.25), transparent 60%),
         linear-gradient(180deg, #0d3a52 0%, #1d678c 60%, #2982a8 100%);
     }
-    input[type=number], input[type=text], select {
-      @apply rounded-md border-slate-300 bg-white px-2.5 py-1.5 text-slate-900 shadow-sm
-             focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none;
-    }
-    .btn { @apply inline-flex justify-center items-center gap-1.5 rounded-md font-medium px-3 py-1.5 shadow-sm transition; }
-    .btn-primary { @apply btn bg-brine-600 hover:bg-brine-700 active:bg-brine-800 text-white; }
-    .btn-secondary { @apply btn bg-white border border-slate-300 hover:bg-slate-50 text-slate-700; }
-    .btn-danger { @apply btn bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 text-xs px-2 py-1; }
-    .label { @apply block text-sm font-medium text-slate-700 mb-1; }
+    .label { display: block; font-size: 0.875rem; font-weight: 500; color: rgb(51 65 85); margin-bottom: 0.25rem; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased">
@@ -67,22 +59,29 @@
       Deco Planner runs the same decompression models as the desktop planners (Buhlmann-GF, VPM-B) directly in your browser. Treat results as <span class="italic">candidates</span>, not a final plan — cross-check against your trusted desktop planner or tables, and never deviate from your training. This tool can be wrong.
     </div>
 
-    <!-- Inputs -->
     <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Settings -->
       <div class="lg:col-span-1 space-y-6">
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <h2 class="text-lg font-semibold text-slate-900 mb-3">Algorithm &amp; conservatism</h2>
+
+          <label class="label" for="unitsToggle">Units</label>
+          <select id="unitsToggle" class="w-full mb-3 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none">
+            <option value="metric" selected>Metric (m)</option>
+            <option value="imperial">Imperial (ft)</option>
+          </select>
+
           <label class="label" for="algorithm">Algorithm</label>
-          <select id="algorithm" class="w-full mb-3">
+          <select id="algorithm" class="w-full mb-3 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none">
             <option value="buhlmann" selected>Buhlmann (ZHL-B + GF)</option>
             <option value="vpm">VPM-B</option>
           </select>
+
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="label" for="gfLow">GF Low</label><input type="number" step="0.05" min="0.05" max="1" id="gfLow" value="0.2" class="w-full"/></div>
-            <div><label class="label" for="gfHigh">GF High</label><input type="number" step="0.05" min="0.05" max="1" id="gfHigh" value="0.8" class="w-full"/></div>
-            <div><label class="label" for="ppO2">Deco ppO₂</label><input type="number" step="0.05" min="0.5" max="2" id="ppO2" value="1.6" class="w-full"/></div>
-            <div><label class="label" for="end">Max END (m)</label><input type="number" step="1" min="0" max="100" id="end" value="30" class="w-full"/></div>
+            <div><label class="label" for="gfLow">GF Low</label><input type="number" step="0.05" min="0.05" max="1" id="gfLow" value="0.2" class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none"/></div>
+            <div><label class="label" for="gfHigh">GF High</label><input type="number" step="0.05" min="0.05" max="1" id="gfHigh" value="0.8" class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none"/></div>
+            <div><label class="label" for="ppO2">Deco ppO₂</label><input type="number" step="0.05" min="0.5" max="2" id="ppO2" value="1.6" class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none"/></div>
+            <div><label class="label" for="end">Max END (<span data-depth-unit>m</span>)</label><input type="number" step="1" min="0" max="500" id="end" value="30" class="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-900 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none"/></div>
           </div>
         </div>
 
@@ -98,9 +97,12 @@
       <div class="lg:col-span-2 space-y-6">
 
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
             <h2 class="text-lg font-semibold text-slate-900">Bottom gases</h2>
-            <button class="btn-secondary" id="addBottomGas">+ Add</button>
+            <div class="flex gap-2">
+              <select id="addStandardBottomGas" class="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none"></select>
+              <button id="addBottomGas" class="inline-flex justify-center items-center rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium px-3 py-1 text-sm shadow-sm transition">+ Custom</button>
+            </div>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
@@ -116,9 +118,12 @@
         </div>
 
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
             <h2 class="text-lg font-semibold text-slate-900">Deco gases</h2>
-            <button class="btn-secondary" id="addDecoGas">+ Add</button>
+            <div class="flex gap-2">
+              <select id="addStandardDecoGas" class="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 shadow-sm focus:border-brine-500 focus:ring-2 focus:ring-brine-200 outline-none"></select>
+              <button id="addDecoGas" class="inline-flex justify-center items-center rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium px-3 py-1 text-sm shadow-sm transition">+ Custom</button>
+            </div>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
@@ -136,13 +141,13 @@
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
           <div class="flex items-center justify-between mb-3">
             <h2 class="text-lg font-semibold text-slate-900">Dive segments</h2>
-            <button class="btn-secondary" id="addDiveSegment">+ Add</button>
+            <button id="addDiveSegment" class="inline-flex justify-center items-center rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium px-3 py-1 text-sm shadow-sm transition">+ Add</button>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead class="text-xs uppercase text-slate-500"><tr>
-                <th class="text-left py-2 pr-2">From (m)</th>
-                <th class="text-left py-2 pr-2">To (m)</th>
+                <th class="text-left py-2 pr-2">From (<span data-depth-unit>m</span>)</th>
+                <th class="text-left py-2 pr-2">To (<span data-depth-unit>m</span>)</th>
                 <th class="text-left py-2 pr-2">Gas</th>
                 <th class="text-left py-2 pr-2">Time (min)</th>
                 <th class="py-2 w-12"></th>
@@ -150,25 +155,24 @@
               <tbody id="diveSegmentsBody"></tbody>
             </table>
           </div>
-          <p class="text-xs text-slate-500 mt-2">For a square profile, add one descent segment (e.g. 0 → 50 m over 5 min) and one flat segment (50 → 50 m for 25 min).</p>
+          <p class="text-xs text-slate-500 mt-2">Bottom segments use start == end (e.g., 50 → 50). Descent or ascent segments use start ≠ end.</p>
         </div>
 
         <div class="flex flex-wrap gap-3 items-center">
-          <button id="calculateDeco" class="btn-primary text-base px-5 py-2.5">
+          <button id="calculateDeco" class="inline-flex justify-center items-center gap-1.5 rounded-md bg-brine-600 hover:bg-brine-700 active:bg-brine-800 disabled:bg-brine-300 text-white font-medium px-5 py-2.5 text-base shadow-sm transition">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
               <path fill-rule="evenodd" d="M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401Z" clip-rule="evenodd" />
             </svg>
             Calculate decompression
           </button>
-          <button id="resetDefaults" class="btn-secondary">Reset to defaults</button>
+          <button id="resetDefaults" class="inline-flex justify-center items-center rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium px-3 py-2 shadow-sm transition">Reset to defaults</button>
         </div>
       </div>
     </section>
 
-    <!-- Results -->
     <section id="resultsSection" class="mt-8 hidden">
       <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-        <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 class="text-xl font-semibold text-slate-900">Computed plan</h2>
           <div class="text-sm text-slate-500">
             <span class="mr-4">Total: <b id="totalTime" class="text-slate-900 tabular-nums">—</b> min</span>
@@ -180,8 +184,8 @@
           <table class="w-full text-sm">
             <thead class="text-xs uppercase text-slate-500 bg-slate-50"><tr>
               <th class="text-left py-2 px-2">Phase</th>
-              <th class="text-left py-2 px-2">From (m)</th>
-              <th class="text-left py-2 px-2">To (m)</th>
+              <th class="text-left py-2 px-2">From (<span data-depth-unit>m</span>)</th>
+              <th class="text-left py-2 px-2">To (<span data-depth-unit>m</span>)</th>
               <th class="text-left py-2 px-2">Gas</th>
               <th class="text-left py-2 px-2">Time (min)</th>
               <th class="text-left py-2 px-2">Running (min)</th>
@@ -201,7 +205,6 @@
     </div>
   </footer>
 
-  <!-- Deco engine (browserified Node module) -->
   <script src="src/scuba-dive.browserified.js"></script>
   <script src="src/deco-planner.js"></script>
 

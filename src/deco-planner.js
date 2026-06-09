@@ -436,6 +436,7 @@
     }
 
     renderResult(result);
+    captureStateToUrl();
   }
 
   function classifyPhase(seg, hasAscended) {
@@ -448,6 +449,100 @@
 
   // Allocated time to physically switch tanks/regs in the water.
   var GAS_SWITCH_MIN = 2;
+
+  // ---------- Share URL ----------
+
+  // Serialize the full input state into the URL hash so a plan is shareable
+  // by copying the address bar. Hash (not query string) so the server never
+  // sees it and the URL can be arbitrarily long.
+  function captureStateToUrl() {
+    var state = {
+      u: units,
+      a: $("algorithm").value,
+      gfL: parseFloat($("gfLow").value),
+      gfH: parseFloat($("gfHigh").value),
+      pp: parseFloat($("ppO2").value),
+      e: parseFloat($("end").value),
+      bg: bottomGases,
+      dg: decoGases,
+      s: segments,
+    };
+    try {
+      var hash = "#plan=" + encodeURIComponent(JSON.stringify(state));
+      history.replaceState(null, "", window.location.pathname + hash);
+    } catch (e) {
+      console.warn("Could not update URL with plan:", e);
+    }
+  }
+
+  // Apply a state object loaded from a shared URL back into the UI state.
+  // Returns true if anything was loaded.
+  function restoreStateFromUrl() {
+    var hash = window.location.hash || "";
+    var m = hash.match(/[#&]plan=([^&]+)/);
+    if (!m) return false;
+    try {
+      var s = JSON.parse(decodeURIComponent(m[1]));
+      if (s.u === "imperial" || s.u === "metric") {
+        units = s.u;
+        $("unitsToggle").value = s.u;
+      }
+      if (s.a === "buhlmann" || s.a === "vpm") $("algorithm").value = s.a;
+      if (typeof s.gfL === "number") $("gfLow").value = s.gfL;
+      if (typeof s.gfH === "number") $("gfHigh").value = s.gfH;
+      if (typeof s.pp === "number") $("ppO2").value = s.pp;
+      if (typeof s.e === "number") $("end").value = s.e;
+      if (Array.isArray(s.bg) && s.bg.length) bottomGases = s.bg.map(function (g) {
+        return { name: String(g.name || "unnamed"), fO2: +g.fO2 || 0, fHe: +g.fHe || 0 };
+      });
+      if (Array.isArray(s.dg)) decoGases = s.dg.map(function (g) {
+        return { name: String(g.name || "unnamed"), fO2: +g.fO2 || 0, fHe: +g.fHe || 0 };
+      });
+      if (Array.isArray(s.s) && s.s.length) segments = s.s.map(function (seg) {
+        return {
+          startDepth: +seg.startDepth || 0,
+          endDepth: +seg.endDepth || 0,
+          gasName: String(seg.gasName || ""),
+          time: +seg.time || 0,
+        };
+      });
+      return true;
+    } catch (e) {
+      console.warn("Failed to parse shared plan from URL:", e);
+      return false;
+    }
+  }
+
+  function copyShareLink() {
+    captureStateToUrl();
+    var url = window.location.href;
+    var done = function () {
+      var btn = $("copyShareLink");
+      var orig = btn.textContent;
+      btn.textContent = "Link copied ✓";
+      setTimeout(function () { btn.textContent = orig; }, 2000);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(done, function () {
+        // Fall through to fallback
+        fallbackCopy(url, done);
+      });
+    } else {
+      fallbackCopy(url, done);
+    }
+  }
+
+  function fallbackCopy(text, cb) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); cb(); }
+    catch (e) { window.prompt("Copy this link:", text); }
+    document.body.removeChild(ta);
+  }
 
   function renderResult(result) {
     var diveTime = segments.reduce(function (a, s) { return a + (s.time || 0); }, 0);
@@ -523,5 +618,18 @@
     finally { btn.disabled = false; }
   });
 
+  $("copyShareLink").addEventListener("click", copyShareLink);
+
+  // If we arrived via a shared URL, hydrate state and auto-compute so the
+  // recipient sees the plan immediately.
+  var loadedFromUrl = restoreStateFromUrl();
   render();
+  if (loadedFromUrl) {
+    setTimeout(function () {
+      var btn = $("calculateDeco");
+      btn.disabled = true;
+      try { calculate(); }
+      finally { btn.disabled = false; }
+    }, 0);
+  }
 })();

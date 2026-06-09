@@ -186,13 +186,13 @@
     var depthCell;
     if (kind === "flat") {
       depthCell =
-        '<input type="number" step="0.5" data-field="depth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/>';
+        '<input type="number" step="0.5" min="0" data-field="depth" value="' + s.startDepth + '" class="' + inputCls + ' w-24"/>';
     } else {
       depthCell =
         '<span class="inline-flex items-center gap-1.5">' +
-          '<input type="number" step="0.5" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-20"/>' +
+          '<input type="number" step="0.5" min="0" data-field="startDepth" value="' + s.startDepth + '" class="' + inputCls + ' w-20"/>' +
           '<span class="text-slate-400">→</span>' +
-          '<input type="number" step="0.5" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-20"/>' +
+          '<input type="number" step="0.5" min="0" data-field="endDepth" value="' + s.endDepth + '" class="' + inputCls + ' w-20"/>' +
         '</span>';
     }
 
@@ -491,6 +491,7 @@
       var s = segments[k];
       var skind = inferKind(s);
       if (!(s.time > 0)) return showError("Segment " + (k + 1) + ": time must be > 0.");
+      if (s.startDepth < 0 || s.endDepth < 0) return showError("Segment " + (k + 1) + ": depths must be ≥ 0.");
       if (skind === "descent" && !(s.endDepth > s.startDepth)) {
         return showError("Segment " + (k + 1) + " is a descent but end depth (" + s.endDepth + ") is not deeper than start (" + s.startDepth + ").");
       }

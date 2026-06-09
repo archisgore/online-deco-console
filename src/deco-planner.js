@@ -88,17 +88,46 @@
     }).join("");
   }
 
-  // Keep each segment's gasName pointing to a still-registered gas. Called
-  // whenever the bottom/deco gas lists change (remove/rename), so a stranded
-  // reference to a deleted gas doesn't blow up the engine at Calculate-time.
+  // Keep each segment's gasName pointing to a still-registered BOTTOM gas.
+  // User-defined dive segments (descent + bottom + optional initial ascent)
+  // should breathe a bottom mix — never a deco mix — so when a referenced
+  // gas disappears we re-point only to bottom gases. If no bottom gas
+  // exists, leave the stale name in place so calculate() errors out
+  // visibly rather than silently producing a wildly wrong plan based on a
+  // deco mix breathed on the bottom.
+  //
+  // Returns an array of {idx, from, to} changes so the caller can surface
+  // them to the user (a silent reassignment looks like "the deco plan got
+  // weird out of nowhere", which is what just bit me).
   function syncSegmentGases() {
-    var available = bottomGases.concat(decoGases).map(function (g) { return g.name; });
-    if (available.length === 0) return;
-    segments.forEach(function (s) {
-      if (available.indexOf(s.gasName) < 0) {
-        s.gasName = available[0];
+    var bottomNames = bottomGases.map(function (g) { return g.name; });
+    var allNames = bottomNames.concat(decoGases.map(function (g) { return g.name; }));
+    var changes = [];
+    if (bottomNames.length === 0) return changes;
+    segments.forEach(function (s, i) {
+      if (allNames.indexOf(s.gasName) < 0) {
+        changes.push({ idx: i, from: s.gasName, to: bottomNames[0] });
+        s.gasName = bottomNames[0];
       }
     });
+    return changes;
+  }
+
+  function showInfo(msg) {
+    var b = $("infoBanner");
+    if (!b) return;
+    b.textContent = msg;
+    b.classList.remove("hidden");
+    clearTimeout(showInfo._t);
+    showInfo._t = setTimeout(function () { b.classList.add("hidden"); }, 8000);
+  }
+
+  function reportSyncChanges(changes) {
+    if (!changes || changes.length === 0) return;
+    var summary = changes.map(function (c) {
+      return "segment " + (c.idx + 1) + " (" + c.from + " → " + c.to + ")";
+    }).join(", ");
+    showInfo("Reassigned " + summary + " because the previous gas was removed. Adjust segments if needed.");
   }
 
   function standardGasOptionsHtml() {
@@ -180,10 +209,10 @@
     var kind = row.getAttribute("data-kind");
     if (kind === "bottom") {
       bottomGases[idx] = readGas(row);
-      syncSegmentGases();
+      reportSyncChanges(syncSegmentGases());
     } else if (kind === "deco") {
       decoGases[idx] = readGas(row);
-      syncSegmentGases();
+      reportSyncChanges(syncSegmentGases());
     } else {
       segments[idx] = readSegment(row);
     }
@@ -198,7 +227,7 @@
     if (kind === "bottom") bottomGases.splice(idx, 1);
     else if (kind === "deco") decoGases.splice(idx, 1);
     else segments.splice(idx, 1);
-    syncSegmentGases();
+    reportSyncChanges(syncSegmentGases());
     render();
   });
 
@@ -304,14 +333,21 @@
       showError("Add at least one dive segment before calculating.");
       return;
     }
+    if (bottomGases.length === 0) {
+      showError("Add at least one bottom gas before calculating — segments must breathe a bottom mix, not a deco mix.");
+      return;
+    }
 
     // Defense-in-depth: ensure every segment references a registered gas, in
     // case a rename or removal slipped through. A change here triggers a
-    // re-render so the user can see the corrected gas choice before retrying.
+    // re-render and a notice so the user sees what the engine actually ran.
     var beforeNames = segments.map(function (s) { return s.gasName; }).join("|");
-    syncSegmentGases();
+    var changes = syncSegmentGases();
     var afterNames = segments.map(function (s) { return s.gasName; }).join("|");
-    if (beforeNames !== afterNames) render();
+    if (beforeNames !== afterNames) {
+      reportSyncChanges(changes);
+      render();
+    }
 
     var algorithm = $("algorithm").value;
     var gfLow  = parseNum($("gfLow").value, NaN);
